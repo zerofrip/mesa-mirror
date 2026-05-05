@@ -39,10 +39,23 @@ zip_path="${OUT_DIR}/${zip_name}"
 
 find_one() {
   local pattern="$1"
-  local p
-  p="$(rg --files "${BUILD_DIR}" | rg "${pattern}" | head -n 1 || true)"
-  [[ -n "${p}" ]] || return 1
-  printf '%s\n' "${BUILD_DIR}/${p}"
+  python3 - <<PY
+import os
+import re
+import sys
+
+build_dir = ${BUILD_DIR@Q}
+pattern = re.compile(${pattern@Q})
+
+for root, _, files in os.walk(build_dir):
+    for name in files:
+        rel = os.path.relpath(os.path.join(root, name), build_dir)
+        if pattern.search(rel):
+            print(os.path.join(build_dir, rel))
+            sys.exit(0)
+
+sys.exit(1)
+PY
 }
 
 write_meta() {
