@@ -111,12 +111,17 @@ case "${BACKEND}" in
     libgl="$(find_one 'libGL\\.so(\\.1)?$')" || \
       libgl="$(find_one 'libGLESv2\\.so(\\.2)?$')" || {
       echo "error: virpipe build missing libGL.so/libGLESv2.so" >&2; exit 1; }
-    glapi="$(find_one 'libglapi\\.so(\\.0)?$')" || {
-      echo "error: virpipe build missing libglapi.so" >&2; exit 1; }
+    glapi="$(find_one 'libglapi\\.so(\\.0)?$' || true)"
 
     mkdir -p "${tmp}/lib"
     cp "${libgl}" "${tmp}/lib/libGL.so.1"
-    cp "${glapi}" "${tmp}/lib/libglapi.so.0"
+    if [[ -n "${glapi}" ]]; then
+      cp "${glapi}" "${tmp}/lib/libglapi.so.0"
+    else
+      # Some Android virgl builds only emit GLES shared libs; provide a compatible
+      # fallback filename expected by GameNative package trust checks.
+      cp "${libgl}" "${tmp}/lib/libglapi.so.0"
+    fi
     write_meta "virpipe-${VERSION}" "libGL.so.1" "adrenotools" "" "lib"
     ;;
 esac
