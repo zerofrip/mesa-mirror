@@ -1,0 +1,248 @@
+name: Upstream Sync + GameNative Drivers Release
+
+on:
+  schedule:
+    - cron: "30 18 * * 0"
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: "Build/release even when upstream has no new commits"
+        required: false
+        default: "false"
+      upstream_ref:
+        description: "Upstream branch to sync from"
+        required: false
+        default: "master"
+
+permissions:
+  contents: write
+
+jobs:
+  sync_upstream:
+    runs-on: ubuntu-latest
+    outputs:
+      updated: ${{ steps.sync.outputs.updated }}
+      upstream_sha: ${{ steps.sync.outputs.upstream_sha }}
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Merge upstream
+        id: sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          UPSTREAM_REF="${{ github.event.inputs.upstream_ref || 'master' }}"
+          BEFORE_SHA="$(git rev-parse HEAD)"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/chaotic-cx/mesa-mirror.git
+          git fetch upstream "${UPSTREAM_REF}"
+          UPSTREAM_SHA="$(git rev-parse "upstream/${UPSTREAM_REF}")"
+
+          if [ "${UPSTREAM_SHA}" = "${BEFORE_SHA}" ]; then
+            echo "updated=false" >> "${GITHUB_OUTPUT}"
+            echo "upstream_sha=${UPSTREAM_SHA}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          git merge --no-ff --no-edit "upstream/${UPSTREAM_REF}"
+          git push origin HEAD:master
+
+          echo "updated=true" >> "${GITHUB_OUTPUT}"
+          echo "upstream_sha=${UPSTREAM_SHA}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    needs: sync_upstream
+    if: needs.sync_upstream.outputs.updated == 'true' || github.event.inputs.force_release == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [freedreno, panvk, virpipe]
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Install host dependencies
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl unzip zip python3 python3-pip python3-setuptools python3-wheel python3-mako \
+            python3-packaging python3-yaml pkg-config libssl-dev libzstd-dev \
+            llvm-18-dev clang-18 libclang-18-dev libclang-cpp18-dev \
+            libllvmspirvlib-18-dev llvm-spirv-18 spirv-tools libdrm-dev libva-dev
+
+      - name: Set up Android NDK r26d
+        env:
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+        run: |
+          set -euo pipefail
+          NDK_DIR="${ANDROID_SDK_ROOT}/ndk/26.3.11579264"
+          if [ ! -d "${NDK_DIR}" ]; then
+            yes | "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" "ndk;26.3.11579264"
+          fi
+          echo "ANDROID_NDK_ROOT=${NDK_DIR}" >> "${GITHUB_ENV}"
+          echo "${NDK_DIR}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "${GITHUB_PATH}"
+
+      - name: Build host mesa_clc (PanVK)
+        if: matrix.backend == 'panvk'
+        run: |
+          set -euo pipefail
+          export LLVM_CONFIG=llvm-config-18
+          ./scripts/gamenative/build-host-mesa-clc.sh
+
+      - name: Build and package backend
+        run: |
+          set -euo pipefail
+          export PKG_CONFIG_LIBDIR=/nonexistent
+          export PKG_CONFIG_PATH=
+          export LLVM_CONFIG=llvm-config-18
+          if [ "${{ matrix.backend }}" = "panvk" ]; then
+            export PATH="/tmp/mesa-host-tools/bin:${PATH}"
+          fi
+          ./scripts/gamenative/build-and-package.sh "${{ matrix.backend }}" dist
+
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamenative-${{ matrix.backend }}
+          path: dist/*.zip
+
+  release:
+    needs: [sync_upstream, build]
+    if: needs.sync_upstream.outputs.updated == 'true' || github.event.inputs.force_release == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          shopt -s nullglob
+          for f in dist/**/*.zip; do
+            cp "$f" release-assets/
+          done
+          ls -lh release-assets
+
+      - name: Create release tag
+        id: tag
+        run: |
+          set -euo pipefail
+          TS="$(date -u +%Y%m%d-%H%M)"
+          TAG="gamenative-drivers-${TS}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.tag.outputs.tag }}" \
+            --title "${{ steps.tag.outputs.tag }}" \
+            --notes "Automated GameNative drivers release after upstream sync to ${{ needs.sync_upstream.outputs.upstream_sha }}" \
+            release-assets/*.zip
+
+  update_gamenative_manifest:
+    needs: [sync_upstream, release]
+    if: needs.sync_upstream.outputs.updated == 'true' || github.event.inputs.force_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GameNative
+        uses: actions/checkout@v4
+        with:
+          repository: zerofrip/GameNative
+          ref: master
+          token: ${{ secrets.GAMENATIVE_REPO_TOKEN }}
+
+      - name: Update Mesa driver URLs in manifest
+        env:
+          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          release_tag = os.environ["RELEASE_TAG"]
+          manifest_path = Path("manifest.json")
+          data = json.loads(manifest_path.read_text(encoding="utf-8"))
+          drivers = data["items"]["driver"]
+
+          targets = {
+              "freedreno-26.2.0-devel": {
+                  "url": f"https://github.com/zerofrip/mesa-mirror/releases/download/{release_tag}/gamenative-freedreno-26.2.0-devel.zip",
+                  "variant": "bionic",
+              },
+              "panvk-26.2.0-devel": {
+                  "url": f"https://github.com/zerofrip/mesa-mirror/releases/download/{release_tag}/gamenative-panvk-26.2.0-devel.zip",
+                  "variant": "bionic",
+                  "driverStack": "panvk",
+              },
+              "virpipe-26.2.0-devel": {
+                  "url": f"https://github.com/zerofrip/mesa-mirror/releases/download/{release_tag}/gamenative-virpipe-26.2.0-devel.zip",
+                  "variant": "bionic",
+              },
+          }
+
+          by_id = {d.get("id"): d for d in drivers}
+          for driver_id, patch in targets.items():
+              if driver_id in by_id:
+                  by_id[driver_id].update(patch)
+              else:
+                  entry = {"id": driver_id, "name": driver_id}
+                  entry.update(patch)
+                  drivers.append(entry)
+
+          manifest_path.write_text(
+              json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Commit and push manifest update
+        env:
+          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          if git diff --cached --quiet; then
+            echo "No manifest changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(manifest): update mesa driver release to ${RELEASE_TAG}"
+          git push origin HEAD:master
+
+      - name: Trigger GameNative build workflow
+        env:
+          GH_TOKEN: ${{ secrets.GAMENATIVE_REPO_TOKEN }}
+          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh api repos/zerofrip/GameNative/dispatches \
+            --method POST \
+            --field event_type='mesa_drivers_updated' \
+            --raw-field client_payload="{\"mesa_release_tag\":\"${RELEASE_TAG}\"}"
