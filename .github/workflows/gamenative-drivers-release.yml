@@ -52,6 +52,8 @@ jobs:
           if [ "${{ matrix.backend }}" = "panvk" ]; then
             sudo apt-get install -y \
               libclc-18-dev \
+              libclang-18-dev \
+              libclang-cpp18-dev \
               libllvmspirvlib-18-dev \
               llvm-18-dev \
               llvm-spirv-18 \
@@ -82,6 +84,8 @@ jobs:
           fi
           export MESON_EXTRA_ARGS="$EXTRA"
           export PATH="$HOME/.local/bin:$PATH"
+          export CFLAGS="${CFLAGS:-} -I/usr/include"
+          export CXXFLAGS="${CXXFLAGS:-} -I/usr/include"
 
           ./scripts/gamenative/build-and-package.sh "${{ matrix.backend }}" "${VERSION}" dist
 
