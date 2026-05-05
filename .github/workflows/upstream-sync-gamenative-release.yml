@@ -214,10 +214,23 @@ jobs:
 
   update_gamenative_manifest:
     needs: [sync_upstream, release]
-    if: (needs.sync_upstream.outputs.updated == 'true' || github.event.inputs.force_release == 'true') && secrets.GAMENATIVE_REPO_TOKEN != ''
+    if: needs.sync_upstream.outputs.updated == 'true' || github.event.inputs.force_release == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Check GameNative token availability
+        id: token_check
+        env:
+          GAMENATIVE_REPO_TOKEN: ${{ secrets.GAMENATIVE_REPO_TOKEN }}
+        run: |
+          if [ -n "${GAMENATIVE_REPO_TOKEN}" ]; then
+            echo "has_token=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_token=false" >> "${GITHUB_OUTPUT}"
+            echo "GAMENATIVE_REPO_TOKEN is not set; skipping GameNative manifest update."
+          fi
+
       - name: Checkout GameNative
+        if: steps.token_check.outputs.has_token == 'true'
         uses: actions/checkout@v4
         with:
           repository: zerofrip/GameNative
@@ -225,6 +238,7 @@ jobs:
           token: ${{ secrets.GAMENATIVE_REPO_TOKEN }}
 
       - name: Update Mesa driver URLs in manifest
+        if: steps.token_check.outputs.has_token == 'true'
         env:
           RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
         run: |
@@ -271,6 +285,7 @@ jobs:
           PY
 
       - name: Commit and push manifest update
+        if: steps.token_check.outputs.has_token == 'true'
         env:
           RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
         run: |
@@ -286,6 +301,7 @@ jobs:
           git push origin HEAD:master
 
       - name: Trigger GameNative build workflow
+        if: steps.token_check.outputs.has_token == 'true'
         env:
           GH_TOKEN: ${{ secrets.GAMENATIVE_REPO_TOKEN }}
           RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
