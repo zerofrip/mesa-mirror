@@ -41,7 +41,7 @@ jobs:
           sudo apt-get install -y \
             glslang-tools \
             libdrm-dev \
-            libva-dev \
+            libssl-dev \
             pkg-config \
             ninja-build \
             cmake \
@@ -76,6 +76,7 @@ jobs:
           EXTRA="-Dgallium-rusticl=false"
           if [ "${{ matrix.backend }}" = "panvk" ]; then
             EXTRA="$EXTRA -Dmesa-clc=auto"
+            export LLVM_CONFIG=llvm-config-18
           fi
           export MESON_EXTRA_ARGS="$EXTRA"
           export PATH="$HOME/.local/bin:$PATH"

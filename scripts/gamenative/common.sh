@@ -52,7 +52,6 @@ ar = ndk_path / 'toolchains/llvm/prebuilt/${prebuilt}/bin/llvm-ar'
 c = ndk_path / 'toolchains/llvm/prebuilt/${prebuilt}/bin/aarch64-linux-android${api}-clang'
 cpp = ndk_path / 'toolchains/llvm/prebuilt/${prebuilt}/bin/aarch64-linux-android${api}-clang++'
 strip = ndk_path / 'toolchains/llvm/prebuilt/${prebuilt}/bin/llvm-strip'
-pkg-config = '/usr/bin/pkg-config'
 
 [host_machine]
 system = 'android'
