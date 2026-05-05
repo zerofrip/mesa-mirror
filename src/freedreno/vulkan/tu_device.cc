@@ -154,6 +154,7 @@ static void
 get_device_extensions(const struct tu_physical_device *device,
                       struct vk_device_extension_table *ext)
 {
+   bool has_gralloc = vk_android_get_ugralloc() != NULL;
    /* device->has_raytracing contains the value of the SW fuse. If the
     * device doesn't have a fuse (i.e. a740), we have to ignore it because
     * kgsl returns false. If it does have a fuse, enable raytracing if the
@@ -352,6 +353,8 @@ get_device_extensions(const struct tu_physical_device *device,
 
       /* For Graphics Flight Recorder (GFR) */
       .AMD_buffer_marker = true,
+      .ANDROID_external_memory_android_hardware_buffer = has_gralloc,
+      .ANDROID_native_buffer = has_gralloc,
       .ARM_rasterization_order_attachment_access = true,
       .GOOGLE_decorate_string = true,
       .GOOGLE_hlsl_functionality1 = true,
@@ -367,13 +370,6 @@ get_device_extensions(const struct tu_physical_device *device,
       .VALVE_fragment_density_map_layered = true,
       .VALVE_mutable_descriptor_type = true,
    } };
-
-#if DETECT_OS_ANDROID
-   if (vk_android_get_ugralloc() != NULL) {
-      ext->ANDROID_external_memory_android_hardware_buffer = true,
-      ext->ANDROID_native_buffer = true;
-   }
-#endif
 }
 
 static void
@@ -1577,6 +1573,9 @@ tu_get_properties(struct tu_physical_device *pdevice,
       pdevice->vk.supported_extensions.QCOM_image_processing
          ? (VkExtent2D) { 64, 64 }
          : (VkExtent2D) { 0, 0 };
+
+   /* VK_ANDROID_native_buffer */
+   props->sharedImage = vk_android_get_front_buffer_usage() != 0;
 }
 
 static const struct vk_pipeline_cache_object_ops *const cache_import_ops[] = {

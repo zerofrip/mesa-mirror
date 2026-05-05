@@ -2536,6 +2536,8 @@ typedef enum nir_texop {
    nir_texop_tex_type_nv,
    /** Maps to TXQ.SAMPLER_POS */
    nir_texop_sample_pos_nv,
+   /** Maps to TEX_GRADIENT */
+   nir_texop_gradient_pan,
    /**
     * Returns the weighted average of a region of texels in the texture, using
     * the filter kernel sampled from ref_texture. (VK_QCOM_image_processing)
@@ -6807,6 +6809,9 @@ typedef struct nir_opt_offsets_options {
 
    /** nir_load/store_buffer_amd max base offset */
    uint32_t buffer_max;
+
+   /** nir_load/store_global_offset max base offset */
+   uint32_t global_max;
 
    /**
     * Callback to get the max base offset for instructions for which the
