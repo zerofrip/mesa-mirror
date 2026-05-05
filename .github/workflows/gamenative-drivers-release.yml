@@ -21,7 +21,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -37,8 +37,10 @@ jobs:
 
       - name: Install host dependencies
         run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             glslang-tools \
             libdrm-dev \
             libssl-dev \
@@ -51,16 +53,21 @@ jobs:
             python3-yaml
 
           if [ "${{ matrix.backend }}" = "panvk" ]; then
-            sudo apt-get install -y \
+            sudo apt-get install -y --no-install-recommends \
               libclc-18-dev \
-              libclang-18-dev \
-              libclang-cpp18-dev \
-              libllvmspirvlib-18-dev \
               llvm-18-dev \
               llvm-spirv-18 \
-              clang-18
+              libllvmspirvlib-18-dev \
+              clang-18 \
+              spirv-tools
           fi
           python -m pip install --upgrade meson ninja mako packaging pyyaml
+
+      - name: Build host mesa_clc (PanVK)
+        if: matrix.backend == 'panvk'
+        run: |
+          export LLVM_CONFIG=llvm-config-18
+          ./scripts/gamenative/build-host-mesa-clc.sh
 
       - name: Setup Android NDK
         id: setup-ndk
@@ -80,11 +87,13 @@ jobs:
 
           EXTRA="-Dgallium-rusticl=false"
           if [ "${{ matrix.backend }}" = "panvk" ]; then
-            EXTRA="$EXTRA -Dmesa-clc=auto"
-            export LLVM_CONFIG=llvm-config-18
+            EXTRA="$EXTRA -Dmesa-clc=system"
           fi
           export MESON_EXTRA_ARGS="$EXTRA"
-          export PATH="$HOME/.local/bin:$PATH"
+          export PATH="${HOME}/.local/bin:${PATH}"
+          if [ "${{ matrix.backend }}" = "panvk" ]; then
+            export PATH="/tmp/mesa-host-tools/bin:${PATH}"
+          fi
           if [ "${{ matrix.backend }}" = "virpipe" ]; then
             mkdir -p .ci-headers
             cp /usr/include/xf86drm.h .ci-headers/

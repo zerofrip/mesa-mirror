@@ -86,8 +86,9 @@ meson setup "${BUILD_DIR}" "${MESA_ROOT}" \
   "-Dplatform-sdk-version=${ANDROID_PLATFORM_SDK_VERSION:-${ANDROID_API_LEVEL:-34}}" \
   -Dandroid-stub=true \
   -Dandroid-libbacktrace=disabled \
-  -Dallow-fallback-for=perfetto \
+  -Dallow-fallback-for=libdrm,perfetto \
   -Dgallium-va=disabled \
+  -Dzstd=disabled \
   "${EGL_OPT[@]}" \
   "${DRIVER_OPTS[@]}" \
   "${PRECOMP_FLAG[@]}" \
