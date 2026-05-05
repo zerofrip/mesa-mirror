@@ -81,7 +81,6 @@ meson setup "${BUILD_DIR}" "${MESA_ROOT}" \
   -Dandroid-stub=true \
   -Dandroid-libbacktrace=disabled \
   -Dgallium-va=disabled \
-  -Dgallium-vdpau=disabled \
   -Degl=disabled \
   "${DRIVER_OPTS[@]}" \
   "${PRECOMP_FLAG[@]}" \
