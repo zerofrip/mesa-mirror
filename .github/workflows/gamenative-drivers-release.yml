@@ -55,6 +55,8 @@ jobs:
           if [ "${{ matrix.backend }}" = "panvk" ]; then
             sudo apt-get install -y --no-install-recommends \
               libclc-18-dev \
+              libclang-18-dev \
+              libclang-cpp18-dev \
               llvm-18-dev \
               llvm-spirv-18 \
               libllvmspirvlib-18-dev \

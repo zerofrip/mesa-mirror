@@ -89,6 +89,7 @@ meson setup "${BUILD_DIR}" "${MESA_ROOT}" \
   -Dallow-fallback-for=libdrm,perfetto \
   -Dgallium-va=disabled \
   -Dzstd=disabled \
+  -Dspirv-tools=disabled \
   "${EGL_OPT[@]}" \
   "${DRIVER_OPTS[@]}" \
   "${PRECOMP_FLAG[@]}" \
