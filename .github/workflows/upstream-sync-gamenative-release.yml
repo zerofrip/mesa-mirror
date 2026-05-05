@@ -66,7 +66,7 @@ jobs:
   build:
     needs: sync_upstream
     if: needs.sync_upstream.outputs.updated == 'true' || github.event.inputs.force_release == 'true'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -84,10 +84,28 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            curl unzip zip python3 python3-pip python3-setuptools python3-wheel python3-mako \
-            python3-packaging python3-yaml pkg-config libssl-dev libzstd-dev \
-            llvm-18-dev clang-18 libclang-18-dev libclang-cpp18-dev \
-            libllvmspirvlib-18-dev llvm-spirv-18 spirv-tools libdrm-dev libva-dev
+            glslang-tools \
+            libdrm-dev \
+            libssl-dev \
+            libzstd-dev \
+            pkg-config \
+            ninja-build \
+            cmake \
+            python3-mako \
+            python3-packaging \
+            python3-yaml
+
+          if [ "${{ matrix.backend }}" = "panvk" ]; then
+            sudo apt-get install -y --no-install-recommends \
+              libclc-18-dev \
+              libclang-18-dev \
+              libclang-cpp18-dev \
+              llvm-18-dev \
+              llvm-spirv-18 \
+              libllvmspirvlib-18-dev \
+              clang-18 \
+              spirv-tools
+          fi
 
       - name: Set up Android NDK r26d
         env:
