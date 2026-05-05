@@ -84,8 +84,13 @@ jobs:
           fi
           export MESON_EXTRA_ARGS="$EXTRA"
           export PATH="$HOME/.local/bin:$PATH"
-          export CFLAGS="${CFLAGS:-} -I/usr/include"
-          export CXXFLAGS="${CXXFLAGS:-} -I/usr/include"
+          if [ "${{ matrix.backend }}" = "virpipe" ]; then
+            mkdir -p .ci-headers
+            cp /usr/include/xf86drm.h .ci-headers/
+            cp /usr/include/libsync.h .ci-headers/
+            export CFLAGS="${CFLAGS:-} -I${PWD}/.ci-headers"
+            export CXXFLAGS="${CXXFLAGS:-} -I${PWD}/.ci-headers"
+          fi
 
           ./scripts/gamenative/build-and-package.sh "${{ matrix.backend }}" "${VERSION}" dist
 
