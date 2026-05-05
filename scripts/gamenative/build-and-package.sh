@@ -26,6 +26,7 @@ require_backend "${BACKEND}"
 require_ndk
 
 mkdir -p "${OUT_DIR}"
+OUT_DIR="$(realpath -m "${OUT_DIR}")"
 
 BUILD_DIR="${MESA_ROOT}/build-gamenative-${BACKEND}"
 "${SCRIPT_DIR}/build-backend.sh" "${BACKEND}" "${BUILD_DIR}"

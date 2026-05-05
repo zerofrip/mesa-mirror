@@ -93,6 +93,9 @@ jobs:
           fi
           export MESON_EXTRA_ARGS="$EXTRA"
           export PATH="${HOME}/.local/bin:${PATH}"
+          # Force cross dependency resolution to avoid host x86_64 pkg-config libs.
+          export PKG_CONFIG_LIBDIR=/nonexistent
+          export PKG_CONFIG_PATH=
           if [ "${{ matrix.backend }}" = "panvk" ]; then
             export PATH="/tmp/mesa-host-tools/bin:${PATH}"
           fi
