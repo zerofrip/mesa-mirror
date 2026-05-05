@@ -44,12 +44,14 @@ fi
 
 case "${BACKEND}" in
   panvk)
+    PRECOMP_FLAG=(-Dprecomp-compiler=system)
     DRIVER_OPTS=(
       -Dgallium-drivers=panfrost
       -Dvulkan-drivers=panfrost
       -Dtools=panfrost
-      -Dinstall-precomp-compiler=true
+      -Dinstall-precomp-compiler=false
     )
+    EGL_OPT=(-Degl=disabled)
     ;;
   freedreno)
     DRIVER_OPTS=(
@@ -60,6 +62,7 @@ case "${BACKEND}" in
       -Dprecomp-compiler=system
       -Dinstall-precomp-compiler=false
     )
+    EGL_OPT=(-Degl=disabled)
     ;;
   virpipe)
     DRIVER_OPTS=(
@@ -69,6 +72,7 @@ case "${BACKEND}" in
       -Dprecomp-compiler=system
       -Dinstall-precomp-compiler=false
     )
+    EGL_OPT=(-Degl=enabled)
     ;;
 esac
 
@@ -84,7 +88,7 @@ meson setup "${BUILD_DIR}" "${MESA_ROOT}" \
   -Dandroid-libbacktrace=disabled \
   -Dallow-fallback-for=perfetto \
   -Dgallium-va=disabled \
-  -Degl=disabled \
+  "${EGL_OPT[@]}" \
   "${DRIVER_OPTS[@]}" \
   "${PRECOMP_FLAG[@]}" \
   ${MESON_EXTRA_ARGS:-}

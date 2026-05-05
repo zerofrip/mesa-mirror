@@ -42,6 +42,7 @@ jobs:
             glslang-tools \
             libdrm-dev \
             libssl-dev \
+            libzstd-dev \
             pkg-config \
             ninja-build \
             cmake \

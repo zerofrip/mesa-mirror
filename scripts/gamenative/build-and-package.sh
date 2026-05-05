@@ -107,8 +107,9 @@ case "${BACKEND}" in
     ;;
 
   virpipe)
-    libgl="$(find_one 'libGL\\.so(\\.1)?$')" || {
-      echo "error: virpipe build missing libGL.so" >&2; exit 1; }
+    libgl="$(find_one 'libGL\\.so(\\.1)?$')" || \
+      libgl="$(find_one 'libGLESv2\\.so(\\.2)?$')" || {
+      echo "error: virpipe build missing libGL.so/libGLESv2.so" >&2; exit 1; }
     glapi="$(find_one 'libglapi\\.so(\\.0)?$')" || {
       echo "error: virpipe build missing libglapi.so" >&2; exit 1; }
 
