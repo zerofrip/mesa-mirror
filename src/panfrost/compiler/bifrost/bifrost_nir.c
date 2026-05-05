@@ -840,7 +840,6 @@ nir_shader_has_local_variables(const nir_shader *nir)
    return false;
 }
 
-static bool pan_nir_lower_texel_buffer_fetch(nir_shader *nir, unsigned arch);
 static bool pan_nir_lower_buf_image_access(nir_shader *nir, unsigned arch);
 static bool bi_should_idvs(nir_shader *nir, const struct pan_compile_inputs *inputs);
 static bool bifrost_nir_lower_vs_atomics(nir_shader *nir);
@@ -861,7 +860,6 @@ bifrost_postprocess_nir(nir_shader *nir,
    if (gpu_arch < 9)
       NIR_PASS(_, nir, pan_nir_lower_image_ms);
 
-   NIR_PASS(_, nir, pan_nir_lower_texel_buffer_fetch, gpu_arch);
    NIR_PASS(_, nir, pan_nir_lower_buf_image_access, gpu_arch);
 
    /* We assume that UBO and SSBO were lowered, let's move things around. */
@@ -942,6 +940,8 @@ bifrost_postprocess_nir(nir_shader *nir,
                inputs->varying_layout, info->vs.idvs,
                &info->vs.needs_extended_fifo);
    }
+
+   NIR_PASS(_, nir, pan_nir_lower_tex, gpu_id);
 
    /* Our OpenCL compiler (src/panfrost/clc/pan_compile.c) has a very weird and
     * suboptimal optimization pipeline that results in a lot of unoptimized
@@ -1065,61 +1065,6 @@ bifrost_postprocess_nir(nir_shader *nir,
 }
 
 static bool
-lower_texel_buffer_fetch(nir_builder *b, nir_tex_instr *tex, void *data)
-{
-   if (tex->op != nir_texop_txf || tex->sampler_dim != GLSL_SAMPLER_DIM_BUF)
-      return false;
-
-   unsigned *arch = data;
-   b->cursor = nir_before_instr(&tex->instr);
-
-   nir_def *res_handle = nir_imm_int(b, tex->texture_index);
-   nir_def *buf_index = NULL;
-   for (unsigned i = 0; i < tex->num_srcs; ++i) {
-      switch (tex->src[i].src_type) {
-      case nir_tex_src_coord:
-         buf_index = tex->src[i].src.ssa;
-         break;
-      case nir_tex_src_texture_offset:
-         /* This should always be 0 as lower_index_to_offset is expected to be
-          * set */
-         assert(tex->texture_index == 0);
-         res_handle = tex->src[i].src.ssa;
-         break;
-      default:
-         continue;
-      }
-   }
-
-   nir_def *loaded_texel_addr =
-      nir_load_texel_buf_index_address_pan(b, res_handle, buf_index);
-   nir_def *texel_addr =
-      nir_pack_64_2x32(b, nir_channels(b, loaded_texel_addr, BITFIELD_MASK(2)));
-
-   nir_def *loaded_mem;
-   if (*arch >= 9) {
-      nir_def *icd = nir_load_texel_buf_conv_pan(b, res_handle);
-      loaded_mem = nir_load_global_cvt_pan(b, tex->def.num_components,
-                                              tex->def.bit_size, texel_addr,
-                                              icd, tex->dest_type);
-   } else {
-      nir_def *icd = nir_channel(b, loaded_texel_addr, 2);
-      loaded_mem = nir_load_global_cvt_pan(b, tex->def.num_components,
-                                              tex->def.bit_size, texel_addr,
-                                              icd, tex->dest_type);
-   }
-   nir_def_replace(&tex->def, loaded_mem);
-   return true;
-}
-
-static bool
-pan_nir_lower_texel_buffer_fetch(nir_shader *shader, unsigned arch)
-{
-   return nir_shader_tex_pass(shader, lower_texel_buffer_fetch,
-                              nir_metadata_control_flow, &arch);
-}
-
-static bool
 lower_buf_image_access(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 {
    switch (intr->intrinsic) {
@@ -1139,21 +1084,25 @@ lower_buf_image_access(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 
    nir_def *res_handle = intr->src[0].ssa;
    nir_def *buf_index = nir_channel(b, intr->src[1].ssa, 0);
-   nir_def *loaded_texel_addr =
-      nir_load_texel_buf_index_address_pan(b, res_handle, buf_index);
-   nir_def *texel_addr =
-      nir_pack_64_2x32(b, nir_channels(b, loaded_texel_addr, BITFIELD_MASK(2)));
+   nir_def *texel_addr, *icd;
+   if (*arch >= 9) {
+      texel_addr = nir_lea_buf_pan(b, res_handle, buf_index);
+      icd = pan_nir_load_va_buf_cvt(b, res_handle);
+   } else {
+      nir_def *attr = nir_lea_attr_pan(b, res_handle, buf_index,
+                                       nir_imm_int(b, 0),
+                                       .src_type = 32,
+                                       .desc_set = BI_TABLE_ATTRIBUTE_1);
+      texel_addr = nir_channels(b, attr, BITFIELD_MASK(2));
+      icd = nir_channel(b, attr, 2);
+   }
+   texel_addr = nir_pack_64_2x32(b, texel_addr);
 
    switch (intr->intrinsic) {
    case nir_intrinsic_image_texel_address:
       nir_def_replace(&intr->def, texel_addr);
       break;
    case nir_intrinsic_image_load: {
-      nir_def *icd;
-      if (*arch >= 9)
-         icd = nir_load_texel_buf_conv_pan(b, res_handle);
-      else
-         icd = nir_channel(b, loaded_texel_addr, 2);
       nir_def *loaded_mem = nir_load_global_cvt_pan(
          b, intr->def.num_components, intr->def.bit_size, texel_addr, icd,
          .dest_type = nir_intrinsic_dest_type(intr));
@@ -1171,11 +1120,6 @@ lower_buf_image_access(nir_builder *b, nir_intrinsic_instr *intr, void *data)
       assert(nir_alu_type_get_type_size(T) == 32);
 
       nir_def *value = intr->src[3].ssa;
-      nir_def *icd;
-      if (*arch >= 9)
-         icd = nir_load_texel_buf_conv_pan(b, res_handle);
-      else
-         icd = nir_channel(b, loaded_texel_addr, 2);
       nir_store_global_cvt_pan(b, value, texel_addr, icd, .src_type = 32);
       nir_instr_remove(&intr->instr);
       break;

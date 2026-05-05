@@ -45,6 +45,52 @@ pan_nir_tile_default_coverage(nir_builder *b)
    return nir_iand_imm(b, nir_load_cumulative_coverage_pan(b), 0x1f);
 }
 
+static inline nir_def *
+pan_nir_res_handle(nir_builder *b, uint32_t table,
+                   uint32_t index, nir_def *offset)
+{
+   if (offset) {
+      return nir_ior_imm(b, nir_iadd_imm(b, offset, index),
+                            pan_res_handle(table, 0));
+   } else {
+      return nir_imm_int(b, pan_res_handle(table, index));
+   }
+}
+
+static nir_def *
+pan_nir_load_va_desc(nir_builder *b, unsigned num_components, unsigned bit_size,
+                     nir_def *handle, uint32_t offset)
+{
+   nir_def *table = nir_ushr_imm(b, handle, 24);
+   nir_def *index = nir_iand_imm(b, handle, 0x00ffffff);
+
+   nir_def *table_handle = nir_ior_imm(b, table, pan_res_handle(62, 0));
+   nir_def *table_offset = nir_iadd_imm(b, nir_imul_imm(b, index, 32), offset);
+
+   assert(offset < 32);
+   return nir_load_ssbo(b, num_components, bit_size,
+                        table_handle, table_offset,
+                        .access = ACCESS_CAN_REORDER,
+                        .align_mul = 32,
+                        .align_offset = offset);
+}
+
+static nir_def *
+pan_nir_load_va_buf_cvt(nir_builder *b, nir_def *handle)
+{
+   /* Dword 7 of the buffer descriptor type is unused by hardware and is
+    * reserved for software to do whatever it wants with it.  By convention,
+    * we place the conversion in dw7 so that we can fetch it from the shader.
+    */
+   nir_def *cvt = pan_nir_load_va_desc(b, 1, 32, handle, 7 * 4);
+
+   /* CONSTANT 0000 L */
+   nir_def *zero_cvt = nir_imm_int(b, 95 << 12 | 231);
+   cvt = nir_bcsel(b, nir_ieq_imm(b, cvt, 0), zero_cvt, cvt);
+
+   return cvt;
+}
+
 bool pan_nir_lower_bool_to_bitsize(nir_shader *shader);
 
 bool pan_nir_lower_vertex_id(nir_shader *shader);
@@ -72,6 +118,46 @@ bool pan_nir_lower_image_index(nir_shader *shader,
                                unsigned vs_img_attrib_offset);
 bool pan_nir_lower_texel_buffer_fetch_index(nir_shader *shader,
                                             unsigned attrib_offset);
+
+PRAGMA_DIAGNOSTIC_PUSH
+PRAGMA_DIAGNOSTIC_ERROR(-Wpadded)
+struct pan_bi_tex_flags {
+   bool skip : 1;
+   bool explicit_lod : 1;
+   unsigned _pad : 14;
+   unsigned sampler_idx : 8;
+   unsigned texture_idx : 8;
+};
+PRAGMA_DIAGNOSTIC_POP
+static_assert(sizeof(struct pan_bi_tex_flags) == 4, "Must fit in uint32_t");
+
+static inline struct pan_bi_tex_flags
+nir_intrinsic_pan_bi_tex_flags(const nir_intrinsic_instr *instr)
+{
+   uint32_t flags_u32 = nir_intrinsic_flags(instr);
+   struct pan_bi_tex_flags flags;
+   memcpy(&flags, &flags_u32, sizeof(flags));
+   return flags;
+}
+
+PRAGMA_DIAGNOSTIC_PUSH
+PRAGMA_DIAGNOSTIC_ERROR(-Wpadded)
+struct pan_va_tex_flags {
+   bool wide_indices : 1;
+   bool array_enable : 1;
+   bool texel_offset : 1;
+   bool compare_enable : 1;
+   unsigned lod_mode : 3;
+   bool derivative_enable : 1;
+   bool force_delta_enable : 1;
+   bool lod_bias_disable : 1;
+   bool lod_clamp_disable : 1;
+   unsigned _pad : 21;
+};
+PRAGMA_DIAGNOSTIC_POP
+static_assert(sizeof(struct pan_va_tex_flags) == 4, "Must fit in uint32_t");
+
+bool pan_nir_lower_tex(nir_shader *nir, uint64_t gpu_id);
 
 nir_alu_type
 pan_unpacked_type_for_format(const struct util_format_description *desc);

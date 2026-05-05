@@ -1594,11 +1594,17 @@ load("shared_ir3", [1], [BASE, ALIGN_MUL, ALIGN_OFFSET], [CAN_ELIMINATE])
 
 # src[] = { value, address(vec2 of hi+lo uint32_t), offset }.
 # const_index[] = { write_mask, align_mul, align_offset }
-store("global_ir3", [1, 1], indices=[ACCESS, ALIGN_MUL, ALIGN_OFFSET])
+# Final address is calculated as `address + ((offset + BASE) << OFFSET_SHIFT)
+# `offset` is sign-extended to 64-bits first so the offset calculation does not
+# cause 32-bit overflows.
+# a6xx has another shift field which only applies to `offset`; this is not
+# represented here.
+store("global_ir3", [1, 1], indices=[ACCESS, ALIGN_MUL, ALIGN_OFFSET, OFFSET_SHIFT, BASE])
 # src[] = { address(vec2 of hi+lo uint32_t), offset }.
 # const_index[] = { access, align_mul, align_offset }
 # the alignment applies to the base address
-load("global_ir3", [1, 1], indices=[ACCESS, ALIGN_MUL, ALIGN_OFFSET, RANGE_BASE, RANGE], flags=[CAN_ELIMINATE])
+# Final address is calculated as for @store_global_ir3
+load("global_ir3", [1, 1], indices=[ACCESS, ALIGN_MUL, ALIGN_OFFSET, RANGE_BASE, RANGE, OFFSET_SHIFT, BASE], flags=[CAN_ELIMINATE])
 
 # Etnaviv-specific load/glboal intrinsics. They take a 32-bit base address and
 # a 32-bit offset, which doesn't need to be an immediate.
@@ -1733,6 +1739,34 @@ store("raw_output_pan", [], [IO_SEMANTICS, BASE])
 store("combined_output_pan", [1, 1, 1, 4], [IO_SEMANTICS, COMPONENT, SRC_TYPE, DEST_TYPE])
 load("raw_output_pan", [1], [IO_SEMANTICS], [CAN_ELIMINATE, CAN_REORDER])
 
+# Returns a vec2 which is the result of CUBEFACE1/2
+# src = { x, y, z }
+intrinsic("cubeface_pan", [1, 1, 1], dest_comp=2, bit_sizes=[32],
+          flags=[CAN_ELIMINATE, CAN_REORDER])
+
+# src = { z, x, face }
+intrinsic("cube_ssel_pan", [1, 1, 1], dest_comp=1, bit_sizes=[32],
+          flags=[CAN_ELIMINATE, CAN_REORDER])
+# src = { y, z, face }
+intrinsic("cube_tsel_pan", [1, 1, 1], dest_comp=1, bit_sizes=[32],
+          flags=[CAN_ELIMINATE, CAN_REORDER])
+
+# src = { x, y }
+intrinsic("texs_2d_pan", [1, 1], dest_comp=4, bit_sizes=[16, 32],
+          indices=[DEST_TYPE, FLAGS], flags=[CAN_ELIMINATE, CAN_REORDER])
+
+# src = { s, t, face }
+intrinsic("texs_cube_pan", [1, 1, 1], dest_comp=4, bit_sizes=[16, 32],
+          indices=[DEST_TYPE, FLAGS], flags=[CAN_ELIMINATE, CAN_REORDER])
+
+# src = { s, t, desc, sr0, sr1 }
+intrinsic("texc0_pan", [1, 1, 1], dest_comp=4, bit_sizes=[16, 32],
+          indices=[DEST_TYPE, FLAGS], flags=[CAN_ELIMINATE, CAN_REORDER])
+intrinsic("texc1_pan", [1, 1, 1, -1], dest_comp=4, bit_sizes=[16, 32],
+          indices=[DEST_TYPE, FLAGS], flags=[CAN_ELIMINATE, CAN_REORDER])
+intrinsic("texc2_pan", [1, 1, 1, -1, -1], dest_comp=4, bit_sizes=[16, 32],
+          indices=[DEST_TYPE, FLAGS], flags=[CAN_ELIMINATE, CAN_REORDER])
+
 # Loads the sampler paramaters <min_lod, max_lod, lod_bias>
 # src[] = { sampler_index }
 load("sampler_lod_parameters", [1], flags=[CAN_ELIMINATE, CAN_REORDER])
@@ -1779,21 +1813,11 @@ system_value("idvs_output_buf_index_pan", 1, bit_sizes=[32])
 
 # src[] = { handle, vertex_id, instance_id }
 intrinsic("lea_attr_pan", [1, 1, 1], dest_comp=3, bit_sizes=[32],
-          indices=[SRC_TYPE], flags=[CAN_ELIMINATE, CAN_REORDER])
+          indices=[SRC_TYPE, DESC_SET], flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # src[] = { handle, index }
 intrinsic("lea_buf_pan", [1, 1], dest_comp=2, bit_sizes=[32],
           flags=[CAN_ELIMINATE, CAN_REORDER])
-
-# Load the address and potentially the conversion descriptor for a texel buffer index.
-# The 64 bit address is always in the first two channels, while the 32 bit
-# conversion descriptor is in the last channel only for Bifrost.
-# src[] = { resource_handle, index }
-intrinsic("load_texel_buf_index_address_pan", [1, 1], dest_comp=3, flags=[CAN_ELIMINATE, CAN_REORDER], bit_sizes=[32])
-
-# Load conversion descriptor for a texel buffer
-# src[] = { resource_handle }
-intrinsic("load_texel_buf_conv_pan", [1], dest_comp=1, flags=[CAN_ELIMINATE, CAN_REORDER], bit_sizes=[32])
 
 # Load input attachment target
 # src[] = { input_attachment_index }

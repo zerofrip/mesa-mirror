@@ -601,7 +601,6 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_ubo_vec4:
    case nir_intrinsic_ldc_nv:
    case nir_intrinsic_ldcx_nv:
-   case nir_intrinsic_load_texel_buf_index_address_pan:
       is_divergent = (src_divergent(instr->src[0], state) &&
                       (nir_intrinsic_access(instr) & ACCESS_NON_UNIFORM)) ||
                      src_divergent(instr->src[1], state);
@@ -648,7 +647,6 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_get_ssbo_size:
    case nir_intrinsic_ssbo_descriptor_amd:
    case nir_intrinsic_deref_buffer_array_length:
-   case nir_intrinsic_load_texel_buf_conv_pan:
       is_divergent = src_divergent(instr->src[0], state) &&
                      (nir_intrinsic_access(instr) & ACCESS_NON_UNIFORM);
       break;
@@ -769,6 +767,14 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_global_cvt_pan:
    case nir_intrinsic_lea_attr_pan:
    case nir_intrinsic_lea_buf_pan:
+   case nir_intrinsic_cubeface_pan:
+   case nir_intrinsic_cube_ssel_pan:
+   case nir_intrinsic_cube_tsel_pan:
+   case nir_intrinsic_texs_2d_pan:
+   case nir_intrinsic_texs_cube_pan:
+   case nir_intrinsic_texc0_pan:
+   case nir_intrinsic_texc1_pan:
+   case nir_intrinsic_texc2_pan:
    case nir_intrinsic_atomic_counter_read:
    case nir_intrinsic_atomic_counter_read_deref:
    case nir_intrinsic_is_sparse_texels_resident:
