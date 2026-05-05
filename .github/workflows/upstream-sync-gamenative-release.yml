@@ -214,7 +214,7 @@ jobs:
 
   update_gamenative_manifest:
     needs: [sync_upstream, release]
-    if: needs.sync_upstream.outputs.updated == 'true' || github.event.inputs.force_release == 'true'
+    if: (needs.sync_upstream.outputs.updated == 'true' || github.event.inputs.force_release == 'true') && secrets.GAMENATIVE_REPO_TOKEN != ''
     runs-on: ubuntu-latest
     steps:
       - name: Checkout GameNative
