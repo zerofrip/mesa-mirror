@@ -44,10 +44,11 @@ jobs:
             ninja-build \
             cmake \
             python3-mako \
+            python3-packaging \
             libclc-18-dev \
             llvm-18-dev \
             clang-18
-          python -m pip install --upgrade meson ninja mako
+          python -m pip install --upgrade meson ninja mako packaging
 
       - name: Setup Android NDK
         id: setup-ndk
