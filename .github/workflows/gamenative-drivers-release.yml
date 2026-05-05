@@ -47,8 +47,7 @@ jobs:
             cmake \
             python3-mako \
             python3-packaging \
-            python3-yaml \
-            python3-distutils
+            python3-yaml
 
           if [ "${{ matrix.backend }}" = "panvk" ]; then
             sudo apt-get install -y \
