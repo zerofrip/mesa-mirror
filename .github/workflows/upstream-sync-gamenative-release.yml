@@ -114,7 +114,9 @@ jobs:
           set -euo pipefail
           NDK_DIR="${ANDROID_SDK_ROOT}/ndk/26.3.11579264"
           if [ ! -d "${NDK_DIR}" ]; then
-            yes | "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" "ndk;26.3.11579264"
+            if ! "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" "ndk;26.3.11579264"; then
+              yes | "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" "ndk;26.3.11579264"
+            fi
           fi
           echo "ANDROID_NDK_ROOT=${NDK_DIR}" >> "${GITHUB_ENV}"
           echo "${NDK_DIR}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "${GITHUB_PATH}"
