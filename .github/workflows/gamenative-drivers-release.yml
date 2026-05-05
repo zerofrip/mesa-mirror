@@ -52,7 +52,9 @@ jobs:
           if [ "${{ matrix.backend }}" = "panvk" ]; then
             sudo apt-get install -y \
               libclc-18-dev \
+              libllvmspirvlib-18-dev \
               llvm-18-dev \
+              llvm-spirv-18 \
               clang-18
           fi
           python -m pip install --upgrade meson ninja mako packaging pyyaml

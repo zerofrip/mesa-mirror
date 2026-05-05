@@ -57,6 +57,7 @@ case "${BACKEND}" in
       -Dvulkan-drivers=freedreno
       -Dfreedreno-kmds=kgsl
       -Dtools=
+      -Dprecomp-compiler=system
       -Dinstall-precomp-compiler=false
     )
     ;;
@@ -65,6 +66,7 @@ case "${BACKEND}" in
       -Dgallium-drivers=virgl
       -Dvulkan-drivers=
       -Dtools=
+      -Dprecomp-compiler=system
       -Dinstall-precomp-compiler=false
     )
     ;;
@@ -80,6 +82,7 @@ meson setup "${BUILD_DIR}" "${MESA_ROOT}" \
   "-Dplatform-sdk-version=${ANDROID_PLATFORM_SDK_VERSION:-${ANDROID_API_LEVEL:-34}}" \
   -Dandroid-stub=true \
   -Dandroid-libbacktrace=disabled \
+  -Dallow-fallback-for=perfetto \
   -Dgallium-va=disabled \
   -Degl=disabled \
   "${DRIVER_OPTS[@]}" \
