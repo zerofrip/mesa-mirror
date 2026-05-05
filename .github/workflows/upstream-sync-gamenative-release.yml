@@ -141,6 +141,8 @@ jobs:
           EXTRA="-Dgallium-rusticl=false"
           if [ "${{ matrix.backend }}" = "panvk" ]; then
             EXTRA="$EXTRA -Dmesa-clc=system"
+          elif [ "${{ matrix.backend }}" = "virpipe" ]; then
+            EXTRA="$EXTRA -Dllvm=disabled"
           fi
           export MESON_EXTRA_ARGS="$EXTRA"
           export PATH="${HOME}/.local/bin:${PATH}"
