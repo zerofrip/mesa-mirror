@@ -28,6 +28,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
           fetch-depth: 0
 
       - name: Merge upstream
@@ -106,6 +111,7 @@ jobs:
               clang-18 \
               spirv-tools
           fi
+          python -m pip install --upgrade meson ninja mako packaging pyyaml
 
       - name: Set up Android NDK r26d
         env:
@@ -131,13 +137,27 @@ jobs:
       - name: Build and package backend
         run: |
           set -euo pipefail
+          VERSION="26.2.0-devel"
+          EXTRA="-Dgallium-rusticl=false"
+          if [ "${{ matrix.backend }}" = "panvk" ]; then
+            EXTRA="$EXTRA -Dmesa-clc=system"
+          fi
+          export MESON_EXTRA_ARGS="$EXTRA"
+          export PATH="${HOME}/.local/bin:${PATH}"
           export PKG_CONFIG_LIBDIR=/nonexistent
           export PKG_CONFIG_PATH=
           export LLVM_CONFIG=llvm-config-18
           if [ "${{ matrix.backend }}" = "panvk" ]; then
             export PATH="/tmp/mesa-host-tools/bin:${PATH}"
           fi
-          ./scripts/gamenative/build-and-package.sh "${{ matrix.backend }}" dist
+          if [ "${{ matrix.backend }}" = "virpipe" ]; then
+            mkdir -p .ci-headers
+            cp /usr/include/xf86drm.h .ci-headers/
+            cp /usr/include/libsync.h .ci-headers/
+            export CFLAGS="${CFLAGS:-} -I${PWD}/.ci-headers"
+            export CXXFLAGS="${CXXFLAGS:-} -I${PWD}/.ci-headers"
+          fi
+          ./scripts/gamenative/build-and-package.sh "${{ matrix.backend }}" "${VERSION}" dist
 
       - name: Upload backend artifact
         uses: actions/upload-artifact@v4
