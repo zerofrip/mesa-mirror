@@ -1,0 +1,124 @@
+name: Build GameNative Drivers
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Git tag name for release (e.g. gamenative-drivers-20260505)"
+        required: true
+        default: "gamenative-drivers-manual"
+      driver_version:
+        description: "Version string embedded in driver meta.json"
+        required: true
+        default: "dev"
+  push:
+    tags:
+      - "gamenative-drivers-*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [freedreno, panvk, virpipe]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            glslang-tools \
+            libdrm-dev \
+            pkg-config \
+            ninja-build \
+            cmake \
+            python3-mako \
+            libclc-18-dev \
+            llvm-18-dev \
+            clang-18
+          python -m pip install --upgrade meson ninja mako
+
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+
+      - name: Build and package backend
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          VERSION="${{ inputs.driver_version }}"
+          if [ -z "${VERSION}" ]; then
+            VERSION="${GITHUB_REF_NAME#gamenative-drivers-}"
+            [ -n "${VERSION}" ] || VERSION="dev"
+          fi
+
+          EXTRA="-Dgallium-rusticl=false"
+          if [ "${{ matrix.backend }}" = "panvk" ]; then
+            EXTRA="$EXTRA -Dmesa-clc=auto"
+          fi
+          export MESON_EXTRA_ARGS="$EXTRA"
+          export PATH="$HOME/.local/bin:$PATH"
+
+          ./scripts/gamenative/build-and-package.sh "${{ matrix.backend }}" "${VERSION}" dist
+
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamenative-${{ matrix.backend }}
+          path: dist/*.zip
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ always() && needs.build.result == 'success' }}
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Prepare notes
+        run: |
+          cat > RELEASE_NOTES.md <<'EOF'
+          Automated GameNative Mesa backend build.
+
+          Backends:
+          - freedreno
+          - panvk
+          - virpipe
+
+          Artifacts are GameNative-compatible ZIPs with meta.json.
+          EOF
+
+      - name: Create GitHub release (workflow_dispatch)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          gh release create "${{ inputs.release_tag }}" \
+            --title "GameNative drivers: ${{ inputs.release_tag }}" \
+            --notes-file RELEASE_NOTES.md \
+            release-assets/**/*.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Create GitHub release (tag push)
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "GameNative drivers: ${{ github.ref_name }}" \
+            --notes-file RELEASE_NOTES.md \
+            release-assets/**/*.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
