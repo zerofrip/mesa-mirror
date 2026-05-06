@@ -307,7 +307,7 @@ jobs:
           RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
         run: |
           set -euo pipefail
-          gh api repos/zerofrip/GameNative/dispatches \
-            --method POST \
-            --field event_type='mesa_drivers_updated' \
-            --raw-field client_payload="{\"mesa_release_tag\":\"${RELEASE_TAG}\"}"
+          # client_payload must be a JSON object in the request body, not an escaped string (422 otherwise).
+          jq -n --arg tag "${RELEASE_TAG}" \
+            '{event_type: "mesa_drivers_updated", client_payload: {mesa_release_tag: $tag}}' \
+            | gh api repos/zerofrip/GameNative/dispatches --input -
