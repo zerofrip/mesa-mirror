@@ -291,6 +291,7 @@ get_device_extensions(const struct anv_physical_device *device,
       .EXT_depth_clip_enable                 = true,
       .EXT_depth_range_unrestricted          = device->info.ver >= 20,
       .EXT_descriptor_buffer                 = true,
+      .EXT_descriptor_heap                   = ANV_DEBUG(EXPERIMENTAL),
       .EXT_descriptor_indexing               = true,
       .EXT_device_address_binding_report     = true,
       .EXT_device_memory_report              = true,
@@ -1027,6 +1028,10 @@ get_features(const struct anv_physical_device *pdevice,
 
       /* VK_KHR_shader_constant_data */
       .shaderConstantData = true,
+
+      /* VK_EXT_descriptor_heap */
+      .descriptorHeap = true,
+      .descriptorHeapCaptureReplay = true,
    };
 
    /* The new DOOM and Wolfenstein games require depthBounds without
@@ -1745,6 +1750,30 @@ get_properties(const struct anv_physical_device *pdevice,
       props->resourceDescriptorBufferAddressSpaceSize = pdevice->va.dynamic_visible_pool.size;
       props->descriptorBufferAddressSpaceSize = pdevice->va.dynamic_visible_pool.size;
       props->samplerDescriptorBufferAddressSpaceSize = pdevice->va.dynamic_visible_pool.size;
+   }
+
+   /* VK_EXT_descriptor_heap */
+   {
+      props->samplerHeapAlignment = 64;
+      props->resourceHeapAlignment = 64;
+      props->maxSamplerHeapSize = pdevice->va.dynamic_visible_pool.size;
+      props->maxResourceHeapSize = anv_physical_device_bindless_heap_size(pdevice,
+                                                                          true);
+      props->minSamplerHeapReservedRange = 0;
+      props->minSamplerHeapReservedRangeWithEmbedded = 0;
+      props->minResourceHeapReservedRange = 0;
+      props->samplerDescriptorSize = ANV_SAMPLER_STATE_SIZE;
+      props->imageDescriptorSize = ANV_SURFACE_STATE_SIZE;
+      props->bufferDescriptorSize = ANV_SURFACE_STATE_SIZE;
+      props->samplerDescriptorAlignment = ANV_SAMPLER_STATE_SIZE;
+      props->imageDescriptorAlignment = ANV_SURFACE_STATE_SIZE;
+      props->bufferDescriptorAlignment = ANV_SURFACE_STATE_SIZE;
+      props->maxPushDataSize = MAX_PUSH_CONSTANTS_SIZE;
+      props->imageCaptureReplayOpaqueDataSize = 8;
+      props->maxDescriptorHeapEmbeddedSamplers = MAX_EMBEDDED_SAMPLERS;
+      props->samplerYcbcrConversionCount = 3;
+      props->sparseDescriptorHeaps = pdevice->info.kmd_type == INTEL_KMD_TYPE_XE;
+      props->protectedDescriptorHeaps = false;
    }
 
    /* VK_EXT_extended_dynamic_state3 */
@@ -3419,4 +3448,35 @@ VkResult anv_GetPhysicalDeviceCooperativeMatrixFlexibleDimensionsPropertiesNV(
    VK_OUTARRAY_MAKE_TYPED(VkCooperativeMatrixFlexibleDimensionsPropertiesNV, out, pProperties, pPropertyCount);
    /* TODO: When we enable flexible dimensions, fill this properly. */
    return vk_outarray_status(&out);
+}
+
+VkDeviceSize anv_GetPhysicalDeviceDescriptorSizeEXT(
+    VkPhysicalDevice                            physicalDevice,
+    VkDescriptorType                            descriptorType)
+{
+   switch (descriptorType) {
+   case VK_DESCRIPTOR_TYPE_SAMPLER:
+      return ANV_SAMPLER_STATE_SIZE;
+
+   case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+      return ANV_SURFACE_STATE_SIZE +
+             align(ANV_SAMPLER_STATE_SIZE, ANV_SURFACE_STATE_SIZE);
+
+   case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+   case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+   case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+   case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+   case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+   case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+   case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+   case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+   case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+      return ANV_SURFACE_STATE_SIZE;
+
+   case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
+      return sizeof(uint64_t);
+
+   default:
+      UNREACHABLE("invalid descriptor type");
+   }
 }

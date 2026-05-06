@@ -945,6 +945,8 @@ uint32_t anv_state_reserved_array_pool_state_index(struct anv_state_reserved_arr
                                                    struct anv_state state);
 void anv_state_reserved_array_pool_free(struct anv_state_reserved_array_pool *pool,
                                         struct anv_state state);
+void anv_state_reserved_array_pool_index_free(struct anv_state_reserved_array_pool *pool,
+                                              uint32_t index);
 
 VkResult anv_state_table_init(struct anv_state_table *table,
                              struct anv_device *device,
@@ -1814,6 +1816,7 @@ enum anv_debug {
    ANV_DEBUG_DESCRIPTOR_DIRTY  = BITFIELD_BIT(9),
    ANV_DEBUG_SHADER_PRINT      = BITFIELD_BIT(10),
    ANV_DEBUG_SHADER_DUMP       = BITFIELD_BIT(11),
+   ANV_DEBUG_EXPERIMENTAL      = BITFIELD_BIT(12),
 };
 
 extern enum anv_debug anv_debug;
@@ -4792,6 +4795,7 @@ enum anv_cmd_descriptor_buffer_mode {
    ANV_CMD_DESCRIPTOR_BUFFER_MODE_UNKNOWN,
    ANV_CMD_DESCRIPTOR_BUFFER_MODE_LEGACY,
    ANV_CMD_DESCRIPTOR_BUFFER_MODE_BUFFER,
+   ANV_CMD_DESCRIPTOR_BUFFER_MODE_HEAP,
 };
 
 enum anv_color_aux_op_class {
@@ -6660,9 +6664,7 @@ struct gfx8_border_color {
 
 extern const struct gfx8_border_color anv_default_border_colors[];
 
-struct anv_sampler {
-   struct vk_sampler            vk;
-
+struct anv_sampler_state {
    /* Hashing key for embedded samplers */
    struct anv_embedded_sampler_key embedded_key;
 
@@ -6670,6 +6672,12 @@ struct anv_sampler {
    /* Packed SAMPLER_STATE without the border color pointer. */
    uint32_t                     state_no_bc[3][4];
    uint32_t                     n_planes;
+};
+
+struct anv_sampler {
+   struct vk_sampler            vk;
+
+   struct anv_sampler_state     state;
 
    /* Blob of sampler state data which is guaranteed to be 32-byte aligned
     * and with a 32-byte stride for use as bindless samplers.
