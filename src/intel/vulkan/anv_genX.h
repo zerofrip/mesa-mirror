@@ -228,11 +228,15 @@ void genX(cmd_buffer_flush_gfx_hw_state)(struct anv_cmd_buffer *cmd_buffer);
 
 void genX(cmd_buffer_flush_gfx_runtime_state)(struct anv_cmd_buffer *cmd_buffer);
 
-void genX(cmd_buffer_flush_gfx_hw_state)(struct anv_cmd_buffer *cmd_buffer);
-
 void genX(cmd_buffer_flush_gfx_state)(struct anv_cmd_buffer *cmd_buffer);
 
-void genX(cmd_buffer_flush_compute_state)(struct anv_cmd_buffer *cmd_buffer);
+void genX(cmd_buffer_flush_gfx)(struct anv_cmd_buffer *cmd_buffer);
+
+void genX(cmd_buffer_flush_compute_state)(struct anv_cmd_buffer *cmd_buffer,
+                                          struct anv_indirect_execution_set *indirect_set);
+
+void genX(cmd_buffer_flush_rt_state)(struct anv_cmd_buffer *cmd_buffer,
+                                     unsigned scratch_size);
 
 void genX(cmd_buffer_enable_pma_fix)(struct anv_cmd_buffer *cmd_buffer,
                                      bool enable);
@@ -513,6 +517,9 @@ void genX(emit_sampler_state)(const struct anv_device *device,
                               uint32_t border_color_offset,
                               struct anv_sampler_state *state);
 
+void genX(cmd_buffer_flush_indirect_cs_descriptor_sets)(struct anv_cmd_buffer *cmd_buffer,
+                                                        const struct anv_pipeline_bind_map *bind_map);
+
 void genX(emit_embedded_sampler)(struct anv_device *device,
                                  struct anv_embedded_sampler *sampler,
                                  struct anv_pipeline_embedded_sampler_binding *binding);
@@ -540,6 +547,10 @@ void genX(write_rt_shader_group)(struct anv_device *device,
                                  const struct vk_shader **shaders,
                                  uint32_t shader_count,
                                  void *output);
+
+void genX(write_cs_descriptor)(struct anv_dgc_cs_descriptor *desc,
+                               struct anv_device *device,
+                               struct anv_shader *shader);
 
 uint32_t genX(shader_cmd_size)(struct anv_device *device,
                                mesa_shader_stage stage);

@@ -628,13 +628,6 @@ fill_inline_params(uint32_t *inline_data,
       case ANV_INLINE_DWORD_PUSH_ADDRESS_UDW:
          inline_data[i] = push_addr64 >> 32;
          break;
-      case anv_drv_const_dword(gfx.mesh_provoking_vertex): {
-         const struct brw_mesh_prog_data *mesh_prog_data = get_gfx_mesh_prog_data(gfx);
-         inline_data[i] = gfx->dyn_state.mesh_provoking_vertex |
-                          ((gfx->shaders[MESA_SHADER_MESH]->kernel.offset +
-                            mesh_prog_data->wa_18019110168_mapping_offset) >> 16);
-         break;
-      }
       default:
          inline_data[i] = push_data[bind_map->inline_dwords[i]];
          break;
@@ -798,7 +791,8 @@ cmd_buffer_flush_vertex_buffers(struct anv_cmd_buffer *cmd_buffer,
    }
 }
 
-ALWAYS_INLINE static void
+/** Flush 3D state programming except binding tables & push constants */
+static inline void
 cmd_buffer_flush_gfx_state(struct anv_cmd_buffer *cmd_buffer)
 {
    struct anv_device *device = cmd_buffer->device;
@@ -867,29 +861,7 @@ cmd_buffer_flush_gfx_state(struct anv_cmd_buffer *cmd_buffer)
    const bool any_dynamic_state_dirty =
       vk_dynamic_graphics_state_any_dirty(dyn);
 
-   cmd_buffer->state.descriptors_dirty |=
-      genX(cmd_buffer_flush_push_descriptors)(cmd_buffer,
-                                              &cmd_buffer->state.gfx.base);
-
-   uint32_t descriptors_dirty = cmd_buffer->state.descriptors_dirty &
-                                gfx->active_stages;
-   cmd_buffer->state.descriptors_pointers_dirty |=
-      descriptors_dirty & VK_SHADER_STAGE_ALL_GRAPHICS;
-   uint32_t descriptors_pointers_dirty =
-      cmd_buffer->state.descriptors_pointers_dirty & gfx->active_stages;
-
-   /* Because we're pushing UBOs, we have to push whenever either descriptors
-    * or push constants is dirty.
-    */
-   uint32_t push_constants_dirty =
-      (cmd_buffer->state.push_constants_dirty |
-       cmd_buffer->state.descriptors_dirty) & gfx->active_stages;
-
-   if (!cmd_buffer->state.gfx.dirty &&
-       !descriptors_dirty &&
-       !descriptors_pointers_dirty &&
-       !any_dynamic_state_dirty &&
-       !push_constants_dirty)
+   if (!cmd_buffer->state.gfx.dirty && !any_dynamic_state_dirty)
       return;
 
    if (cmd_buffer->state.gfx.dirty & ANV_CMD_DIRTY_XFB_ENABLE) {
@@ -988,9 +960,51 @@ cmd_buffer_flush_gfx_state(struct anv_cmd_buffer *cmd_buffer)
    }
 #endif
 
+#if GFX_VER >= 20
+   if (cmd_buffer->state.gfx.dirty & ANV_CMD_DIRTY_INDIRECT_DATA_STRIDE) {
+      anv_batch_emit(&cmd_buffer->batch, GENX(STATE_BYTE_STRIDE), sb_stride) {
+         sb_stride.ByteStride = cmd_buffer->state.gfx.indirect_data_stride >> 2;
+         sb_stride.ByteStrideEnable =
+            cmd_buffer->state.gfx.indirect_data_stride_aligned == U_TRISTATE_NO;
+      }
+   }
+#endif
+
    /* Render targets live in the same binding table as fragment descriptors */
    if (cmd_buffer->state.gfx.dirty & ANV_CMD_DIRTY_RENDER_TARGETS)
-      descriptors_dirty |= VK_SHADER_STAGE_FRAGMENT_BIT;
+      cmd_buffer->state.descriptors_dirty |= VK_SHADER_STAGE_FRAGMENT_BIT;
+
+   cmd_buffer->state.gfx.dirty = 0;
+}
+
+/** Flush binding tables & push constants programming */
+static inline void
+cmd_buffer_flush_gfx_pointers(struct anv_cmd_buffer *cmd_buffer)
+{
+   struct anv_cmd_graphics_state *gfx = &cmd_buffer->state.gfx;
+
+   cmd_buffer->state.descriptors_dirty |=
+      genX(cmd_buffer_flush_push_descriptors)(cmd_buffer,
+                                              &cmd_buffer->state.gfx.base);
+
+   uint32_t descriptors_dirty =
+      cmd_buffer->state.descriptors_dirty & gfx->active_stages;
+   cmd_buffer->state.descriptors_pointers_dirty |=
+      descriptors_dirty & VK_SHADER_STAGE_ALL_GRAPHICS;
+   uint32_t descriptors_pointers_dirty =
+      cmd_buffer->state.descriptors_pointers_dirty & gfx->active_stages;
+
+   /* Because we're pushing UBOs, we have to push whenever either descriptors
+    * or push constants is dirty.
+    */
+   uint32_t push_constants_dirty =
+      (cmd_buffer->state.push_constants_dirty |
+       cmd_buffer->state.descriptors_dirty) & gfx->active_stages;
+
+   if (descriptors_dirty == 0 &&
+       descriptors_pointers_dirty == 0 &&
+       push_constants_dirty == 0)
+      return;
 
    /* We emit the binding tables and sampler tables first, then emit push
     * constants and then finally emit binding table and sampler table
@@ -1000,7 +1014,7 @@ cmd_buffer_flush_gfx_state(struct anv_cmd_buffer *cmd_buffer)
     * 3DSTATE_BINDING_TABLE_POINTER_* for the push constants to take effect.
     */
    if (descriptors_dirty) {
-      descriptors_pointers_dirty |=
+      cmd_buffer->state.descriptors_pointers_dirty |=
          genX(cmd_buffer_flush_descriptor_sets)(
             cmd_buffer,
             &cmd_buffer->state.gfx.base,
@@ -1008,6 +1022,10 @@ cmd_buffer_flush_gfx_state(struct anv_cmd_buffer *cmd_buffer)
             (const struct anv_shader **)gfx->shaders,
             ARRAY_SIZE(gfx->shaders)) & VK_SHADER_STAGE_ALL_GRAPHICS;
    }
+
+   descriptors_pointers_dirty =
+      cmd_buffer->state.descriptors_pointers_dirty & gfx->active_stages;
+
 
    push_constants_dirty = (cmd_buffer->state.push_constants_dirty |
                            cmd_buffer->state.descriptors_dirty) & gfx->active_stages;
@@ -1031,25 +1049,30 @@ cmd_buffer_flush_gfx_state(struct anv_cmd_buffer *cmd_buffer)
    if (descriptors_pointers_dirty)
       cmd_buffer_emit_descriptor_pointers(cmd_buffer, descriptors_pointers_dirty);
 
-#if GFX_VER >= 20
-   if (cmd_buffer->state.gfx.dirty & ANV_CMD_DIRTY_INDIRECT_DATA_STRIDE) {
-      anv_batch_emit(&cmd_buffer->batch, GENX(STATE_BYTE_STRIDE), sb_stride) {
-         sb_stride.ByteStride = cmd_buffer->state.gfx.indirect_data_stride >> 2;
-         sb_stride.ByteStrideEnable =
-            cmd_buffer->state.gfx.indirect_data_stride_aligned == U_TRISTATE_NO;
-      }
-   }
-#endif
 
    cmd_buffer->state.descriptors_dirty &= ~descriptors_dirty;
    cmd_buffer->state.descriptors_pointers_dirty &= ~descriptors_pointers_dirty;
-   cmd_buffer->state.gfx.dirty = 0;
 }
 
 void
 genX(cmd_buffer_flush_gfx_state)(struct anv_cmd_buffer *cmd_buffer)
 {
    cmd_buffer_flush_gfx_state(cmd_buffer);
+}
+
+/** Flush everything needed prior to drawcall emission */
+static inline void
+cmd_buffer_flush_gfx(struct anv_cmd_buffer *cmd_buffer)
+{
+   cmd_buffer_flush_gfx_state(cmd_buffer);
+   cmd_buffer_flush_gfx_pointers(cmd_buffer);
+}
+
+void
+genX(cmd_buffer_flush_gfx)(struct anv_cmd_buffer *cmd_buffer)
+{
+   cmd_buffer_flush_gfx_state(cmd_buffer);
+   cmd_buffer_flush_gfx_pointers(cmd_buffer);
 }
 
 ALWAYS_INLINE static bool
@@ -1233,7 +1256,7 @@ void genX(CmdDraw)(
 
    /* Select pipeline here to allow
     * cmd_buffer_emit_vertex_constants_and_flush() without flushing before
-    * cmd_buffer_flush_gfx_state().
+    * cmd_buffer_flush_gfx().
     */
    genX(flush_pipeline_select_3d)(cmd_buffer);
 
@@ -1244,7 +1267,7 @@ void genX(CmdDraw)(
                                               false /* force_flush */);
 #endif
 
-   cmd_buffer_flush_gfx_state(cmd_buffer);
+   cmd_buffer_flush_gfx(cmd_buffer);
 
    if (cmd_buffer->state.conditional_render_enabled)
       genX(cmd_emit_conditional_render_predicate)(cmd_buffer);
@@ -1292,7 +1315,7 @@ void genX(CmdDrawMultiEXT)(
    if (anv_batch_has_error(&cmd_buffer->batch))
       return;
 
-   cmd_buffer_flush_gfx_state(cmd_buffer);
+   cmd_buffer_flush_gfx(cmd_buffer);
 
    if (cmd_buffer->state.conditional_render_enabled)
       genX(cmd_emit_conditional_render_predicate)(cmd_buffer);
@@ -1394,7 +1417,7 @@ void genX(CmdDrawIndexed)(
 
    /* Select pipeline here to allow
     * cmd_buffer_emit_vertex_constants_and_flush() without flushing before
-    * cmd_buffer_flush_gfx_state().
+    * cmd_buffer_flush_gfx().
     */
    genX(flush_pipeline_select_3d)(cmd_buffer);
 
@@ -1405,7 +1428,7 @@ void genX(CmdDrawIndexed)(
                                               0, false /* force_flush */);
 #endif
 
-   cmd_buffer_flush_gfx_state(cmd_buffer);
+   cmd_buffer_flush_gfx(cmd_buffer);
 
    if (cmd_buffer->state.conditional_render_enabled)
       genX(cmd_emit_conditional_render_predicate)(cmd_buffer);
@@ -1453,7 +1476,7 @@ void genX(CmdDrawMultiIndexedEXT)(
    if (anv_batch_has_error(&cmd_buffer->batch))
       return;
 
-   cmd_buffer_flush_gfx_state(cmd_buffer);
+   cmd_buffer_flush_gfx(cmd_buffer);
 
    if (cmd_buffer->state.conditional_render_enabled)
       genX(cmd_emit_conditional_render_predicate)(cmd_buffer);
@@ -1690,7 +1713,7 @@ void genX(CmdDrawIndirectByteCountEXT)(
       emit_draw_index(cmd_buffer, 0);
 #endif
 
-   cmd_buffer_flush_gfx_state(cmd_buffer);
+   cmd_buffer_flush_gfx(cmd_buffer);
 
    if (cmd_buffer->state.conditional_render_enabled)
       genX(cmd_emit_conditional_render_predicate)(cmd_buffer);
@@ -1843,7 +1866,7 @@ emit_indirect_draws(struct anv_cmd_buffer *cmd_buffer,
    const struct anv_cmd_graphics_state *gfx = &cmd_buffer->state.gfx;
    const struct brw_vs_prog_data *vs_prog_data = get_gfx_vs_prog_data(gfx);
 #endif
-   cmd_buffer_flush_gfx_state(cmd_buffer);
+   cmd_buffer_flush_gfx(cmd_buffer);
 
    if (cmd_buffer->state.conditional_render_enabled)
       genX(cmd_emit_conditional_render_predicate)(cmd_buffer);
@@ -1983,7 +2006,7 @@ genX(cmd_buffer_emit_execute_indirect_draws)(struct anv_cmd_buffer *cmd_buffer,
    bool aligned_stride =
       cmd_buffer_set_indirect_stride(cmd_buffer, indirect_data_stride, cmd);
 
-   genX(cmd_buffer_flush_gfx_state)(cmd_buffer);
+   cmd_buffer_flush_gfx(cmd_buffer);
 
    if (cmd_buffer->state.conditional_render_enabled)
       genX(cmd_emit_conditional_render_predicate)(cmd_buffer);
@@ -2222,7 +2245,7 @@ emit_indirect_count_draws(struct anv_cmd_buffer *cmd_buffer,
    const struct brw_vs_prog_data *vs_prog_data = get_gfx_vs_prog_data(gfx);
 #endif
 
-   cmd_buffer_flush_gfx_state(cmd_buffer);
+   cmd_buffer_flush_gfx(cmd_buffer);
 
    struct mi_builder b;
    mi_builder_init(&b, cmd_buffer->device->info, &cmd_buffer->batch);
@@ -2525,7 +2548,7 @@ genX(CmdDrawMeshTasksEXT)(
    trace_intel_begin_draw_mesh(&cmd_buffer->trace);
 
    /* TODO(mesh): Check if this is not emitting more packets than we need. */
-   cmd_buffer_flush_gfx_state(cmd_buffer);
+   cmd_buffer_flush_gfx(cmd_buffer);
 
    if (cmd_buffer->state.conditional_render_enabled)
       genX(cmd_emit_conditional_render_predicate)(cmd_buffer);
@@ -2618,7 +2641,7 @@ genX(CmdDrawMeshTasksIndirectEXT)(
       return;
    }
 
-   cmd_buffer_flush_gfx_state(cmd_buffer);
+   cmd_buffer_flush_gfx(cmd_buffer);
 
    if (cmd_state->conditional_render_enabled)
       genX(cmd_emit_conditional_render_predicate)(cmd_buffer);
@@ -2685,7 +2708,7 @@ genX(CmdDrawMeshTasksIndirectCountEXT)(
       return;
    }
 
-   cmd_buffer_flush_gfx_state(cmd_buffer);
+   cmd_buffer_flush_gfx(cmd_buffer);
 
    bool uses_drawid = (task_prog_data && task_prog_data->uses_drawid) ||
                        mesh_prog_data->uses_drawid;
