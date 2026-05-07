@@ -153,11 +153,12 @@ to_brw_reg(jay_function *f,
       }
 
       if (d.file == GPR) {
-         R = byte_offset(xe2_vec8_grf(phys_reg, 0),
-                         simd_offs * simd_width * stride_bits / 8);
+         R = xe2_vec8_grf(phys_reg, 0);
       } else {
          R = brw_vecn_reg(8, ARF, BRW_ARF_ACCUMULATOR + (phys_reg * 2), 0);
       }
+
+      R = byte_offset(R, simd_offs * simd_width * stride_bits / 8);
 
       if (stride_bits == (type_bits * 4)) {
          R = stride(R, 8, 2, 4);
@@ -340,6 +341,7 @@ emit(struct brw_codegen *p,
       OP2(SHR, SHR)
       OP2(SHL, SHL)
       OP2(BFI1, BFI1)
+      OP2(MAC, MAC)
       OP3(BFI2, BFI2)
       OP3(ADD3, ADD3)
       OP3(CSEL, CSEL)
@@ -411,6 +413,10 @@ emit(struct brw_codegen *p,
 
    case JAY_OPCODE_SYNC:
       brw_SYNC(p, jay_sync_op(I));
+
+      if (!jay_is_null(I->src[0])) {
+         brw_set_src0(p, brw_eu_last_inst(p), stride(SRC(0), 0, 1, 0));
+      }
       break;
 
    case JAY_OPCODE_CMP:

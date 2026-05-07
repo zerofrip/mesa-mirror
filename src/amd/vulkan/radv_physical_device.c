@@ -874,6 +874,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .EXT_pipeline_creation_cache_control = true,
       .EXT_pipeline_creation_feedback = true,
       .EXT_pipeline_library_group_handles = radv_enable_rt(pdev),
+      .EXT_pipeline_protected_access = radv_tmz_enabled(pdev),
       .EXT_pipeline_robustness = !pdev->use_llvm,
       .EXT_post_depth_coverage = pdev->info.gfx_level >= GFX10,
 #ifdef RADV_USE_WSI_PLATFORM
@@ -1118,7 +1119,11 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
       .dynamicRenderingLocalRead = true,
       .maintenance5 = true,
       .maintenance6 = true,
-      .pipelineProtectedAccess = false,
+
+      /* The pipeline flags are ignored because it's not really possible to
+       * control this at pipeline level.
+       */
+      .pipelineProtectedAccess = radv_tmz_enabled(pdev),
       .pipelineRobustness = true,
       .hostImageCopy = radv_host_image_copy_enabled(pdev),
       .pushDescriptor = true,
@@ -2687,10 +2692,10 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
     */
    char buf[VK_UUID_SIZE * 2 + 1];
    mesa_bytes_to_hex(buf, pdev->cache_uuid, VK_UUID_SIZE);
-   pdev->vk.disk_cache = disk_cache_create(pdev->name, buf, 0);
+   pdev->vk.disk_cache = disk_cache_create("RADV", buf, 0);
 
    pdev->disk_cache_meta =
-      disk_cache_create_custom(pdev->name, buf, 0, "radv_builtin_shaders", 1024 * 1024 * 32 /* 32MiB */);
+      disk_cache_create_custom("RADV", buf, 0, "radv_builtin_shaders", 1024 * 1024 * 32 /* 32MiB */);
 
    radv_get_physical_device_properties(pdev);
 

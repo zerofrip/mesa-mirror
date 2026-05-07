@@ -942,6 +942,7 @@ bifrost_postprocess_nir(nir_shader *nir,
    }
 
    NIR_PASS(_, nir, pan_nir_lower_tex, gpu_id);
+   NIR_PASS(_, nir, pan_nir_lower_image, gpu_id);
 
    /* Our OpenCL compiler (src/panfrost/clc/pan_compile.c) has a very weird and
     * suboptimal optimization pipeline that results in a lot of unoptimized
@@ -1185,7 +1186,7 @@ bifrost_nir_lower_vs_atomics_impl(nir_builder *b, nir_intrinsic_instr *intr,
 
    unsigned output_mask = 0;
    nir_foreach_use(use, &intr->def) {
-      nir_instr *parent = nir_src_parent_instr(use);
+      nir_instr *parent = nir_src_use_instr(use);
       if (parent->type != nir_instr_type_intrinsic)
          continue;
 
