@@ -874,16 +874,14 @@ genX(cmd_buffer_dispatch_indirect)(struct anv_cmd_buffer *cmd_buffer,
                                     prog_data->base.source_hash);
 }
 
-void genX(CmdDispatchIndirect)(
+void genX(CmdDispatchIndirect2KHR)(
     VkCommandBuffer                             commandBuffer,
-    VkBuffer                                    _buffer,
-    VkDeviceSize                                offset)
+    const VkDispatchIndirect2InfoKHR*           pInfo)
 {
    ANV_FROM_HANDLE(anv_cmd_buffer, cmd_buffer, commandBuffer);
-   ANV_FROM_HANDLE(anv_buffer, buffer, _buffer);
-   struct anv_address addr = anv_address_add(buffer->address, offset);
 
-   genX(cmd_buffer_dispatch_indirect)(cmd_buffer, addr, false);
+   genX(cmd_buffer_dispatch_indirect)(
+      cmd_buffer, anv_address_from_u64(pInfo->addressRange.address), false);
 }
 
 struct anv_address
