@@ -80,17 +80,17 @@ static int si_video_get_param(struct pipe_screen *screen, enum pipe_video_profil
       case PIPE_VIDEO_CAP_VPP_MIN_OUTPUT_HEIGHT:
          return 16;
       case PIPE_VIDEO_CAP_VPP_ORIENTATION_MODES:
-         /* VPE 1st generation does not support orientation
-          * Have to determine the version and features of VPE in future.
-          */
+         if (sscreen->info.vpe_ip_version == VPE_2_0)
+            return (PIPE_VIDEO_VPP_ROTATION_90 |
+                    PIPE_VIDEO_VPP_ROTATION_180 |
+                    PIPE_VIDEO_VPP_ROTATION_270 |
+                    PIPE_VIDEO_VPP_FLIP_HORIZONTAL |
+                    PIPE_VIDEO_VPP_FLIP_VERTICAL);
          return PIPE_VIDEO_VPP_FLIP_HORIZONTAL;
       case PIPE_VIDEO_CAP_VPP_BLEND_MODES:
-         /* VPE 1st generation does not support blending.
-          * Have to determine the version and features of VPE in future.
-          */
+         if (sscreen->info.vpe_ip_version == VPE_2_0)
+            return PIPE_VIDEO_VPP_BLEND_MODE_GLOBAL_ALPHA;
          return PIPE_VIDEO_VPP_BLEND_MODE_NONE;
-      case PIPE_VIDEO_CAP_PREFERRED_FORMAT:
-         return PIPE_FORMAT_NV12;
       case PIPE_VIDEO_CAP_SUPPORTS_PROGRESSIVE:
          return true;
       case PIPE_VIDEO_CAP_REQUIRES_FLUSH_ON_END_FRAME:
@@ -124,8 +124,6 @@ static int si_video_get_param(struct pipe_screen *screen, enum pipe_video_profil
             (profile == PIPE_VIDEO_PROFILE_HEVC_MAIN_10 && sscreen->info.vcn_ip_version >= VCN_2_0_0) ||
             (profile == PIPE_VIDEO_PROFILE_AV1_MAIN &&
 	     (sscreen->info.vcn_ip_version >= VCN_4_0_0 && sscreen->info.vcn_ip_version != VCN_4_0_3))));
-      case PIPE_VIDEO_CAP_NPOT_TEXTURES:
-         return 1;
       case PIPE_VIDEO_CAP_MIN_WIDTH:
          if (sscreen->info.vcn_ip_version >= VCN_5_0_0) {
             if (codec == PIPE_VIDEO_FORMAT_MPEG4_AVC)
@@ -150,15 +148,8 @@ static int si_video_get_param(struct pipe_screen *screen, enum pipe_video_profil
             return KERNEL_ENC_CAP(codec, max_height);
          else
             return (sscreen->info.family < CHIP_TONGA) ? 1152 : 2304;
-      case PIPE_VIDEO_CAP_PREFERRED_FORMAT:
-         if (profile == PIPE_VIDEO_PROFILE_HEVC_MAIN_10)
-            return PIPE_FORMAT_P010;
-         else
-            return PIPE_FORMAT_NV12;
       case PIPE_VIDEO_CAP_SUPPORTS_PROGRESSIVE:
          return true;
-      case PIPE_VIDEO_CAP_STACKED_FRAMES:
-         return (sscreen->info.family < CHIP_TONGA) ? 1 : 2;
       case PIPE_VIDEO_CAP_MAX_TEMPORAL_LAYERS:
          return (sscreen->info.ip[AMD_IP_UVD_ENC].num_queues ||
                  sscreen->info.vcn_ip_version >= VCN_1_0_0) ? 4 : 0;
@@ -415,8 +406,6 @@ static int si_video_get_param(struct pipe_screen *screen, enum pipe_video_profil
       default:
          return false;
       }
-   case PIPE_VIDEO_CAP_NPOT_TEXTURES:
-      return 1;
    case PIPE_VIDEO_CAP_MIN_WIDTH:
    case PIPE_VIDEO_CAP_MIN_HEIGHT:
       if (codec == PIPE_VIDEO_FORMAT_VP9 || codec == PIPE_VIDEO_FORMAT_AV1)
@@ -450,46 +439,8 @@ static int si_video_get_param(struct pipe_screen *screen, enum pipe_video_profil
             return (sscreen->info.family < CHIP_TONGA) ? 1152 : 4096;
          }
       }
-   case PIPE_VIDEO_CAP_PREFERRED_FORMAT:
-      if (profile == PIPE_VIDEO_PROFILE_HEVC_MAIN_10)
-         return PIPE_FORMAT_P010;
-      else if (profile == PIPE_VIDEO_PROFILE_VP9_PROFILE2)
-         return PIPE_FORMAT_P010;
-      else
-         return PIPE_FORMAT_NV12;
-
    case PIPE_VIDEO_CAP_SUPPORTS_PROGRESSIVE:
       return true;
-   case PIPE_VIDEO_CAP_MAX_LEVEL:
-      if ((profile == PIPE_VIDEO_PROFILE_MPEG2_SIMPLE ||
-           profile == PIPE_VIDEO_PROFILE_MPEG2_MAIN ||
-           profile == PIPE_VIDEO_PROFILE_VC1_ADVANCED) &&
-          sscreen->info.dec_caps.codec_info[codec - 1].valid) {
-         return sscreen->info.dec_caps.codec_info[codec - 1].max_level;
-      } else {
-         switch (profile) {
-         case PIPE_VIDEO_PROFILE_MPEG1:
-            return 0;
-         case PIPE_VIDEO_PROFILE_MPEG2_SIMPLE:
-         case PIPE_VIDEO_PROFILE_MPEG2_MAIN:
-            return 3;
-         case PIPE_VIDEO_PROFILE_VC1_SIMPLE:
-            return 1;
-         case PIPE_VIDEO_PROFILE_VC1_MAIN:
-            return 2;
-         case PIPE_VIDEO_PROFILE_VC1_ADVANCED:
-            return 4;
-         case PIPE_VIDEO_PROFILE_MPEG4_AVC_CONSTRAINED_BASELINE:
-         case PIPE_VIDEO_PROFILE_MPEG4_AVC_MAIN:
-         case PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH:
-            return (sscreen->info.family < CHIP_TONGA) ? 41 : 52;
-         case PIPE_VIDEO_PROFILE_HEVC_MAIN:
-         case PIPE_VIDEO_PROFILE_HEVC_MAIN_10:
-            return 186;
-         default:
-            return 0;
-         }
-      }
    case PIPE_VIDEO_CAP_SUPPORTS_CONTIGUOUS_PLANES_MAP:
       return true;
    case PIPE_VIDEO_CAP_ROI_CROP_DEC:
@@ -511,20 +462,21 @@ static bool si_vid_is_format_supported(struct pipe_screen *screen, enum pipe_for
 {
    struct si_screen *sscreen = (struct si_screen *)screen;
 
-   if (sscreen->info.ip[AMD_IP_VPE].num_queues && entrypoint == PIPE_VIDEO_ENTRYPOINT_PROCESSING) {
-      /* Todo:
-       * Unable to confirm whether it is asking for an input or output type
-       * Have to modify va frontend for solving this problem
+   if (entrypoint == PIPE_VIDEO_ENTRYPOINT_PROCESSING && sscreen->info.vpe_ip_version != VPE_UNKNOWN) {
+      /* VPE_2_0 is expected to also support
+       * 8-bit alpha plane, floating RGBA (16-bit),
+       * but these are not included here because current VA frontends do not support them.
        */
-      /* VPE Supported input type */
-      if ((format == PIPE_FORMAT_NV12) || (format == PIPE_FORMAT_NV21) || (format == PIPE_FORMAT_P010))
-         return true;
+      if (sscreen->info.vpe_ip_version == VPE_2_0)
+         if ((format == PIPE_FORMAT_P012) ||
+             (format == PIPE_FORMAT_YUYV) || (format == PIPE_FORMAT_UYVY))
+            return true;
 
-      /* VPE Supported output type */
-      if ((format == PIPE_FORMAT_A8R8G8B8_UNORM) || (format == PIPE_FORMAT_A8B8G8R8_UNORM) || (format == PIPE_FORMAT_R8G8B8A8_UNORM) ||
-          (format == PIPE_FORMAT_B8G8R8A8_UNORM) || (format == PIPE_FORMAT_X8R8G8B8_UNORM) || (format == PIPE_FORMAT_X8B8G8R8_UNORM) ||
-          (format == PIPE_FORMAT_R8G8B8X8_UNORM) || (format == PIPE_FORMAT_B8G8R8X8_UNORM) || (format == PIPE_FORMAT_A2R10G10B10_UNORM) ||
-          (format == PIPE_FORMAT_A2B10G10R10_UNORM) || (format == PIPE_FORMAT_B10G10R10A2_UNORM) || (format == PIPE_FORMAT_R10G10B10A2_UNORM))
+      if ((format == PIPE_FORMAT_NV12) || (format == PIPE_FORMAT_P010) ||
+          (format == PIPE_FORMAT_A8R8G8B8_UNORM) || (format == PIPE_FORMAT_A8B8G8R8_UNORM) ||
+          (format == PIPE_FORMAT_R8G8B8A8_UNORM) || (format == PIPE_FORMAT_B8G8R8A8_UNORM) ||
+          (format == PIPE_FORMAT_R8G8B8X8_UNORM) || (format == PIPE_FORMAT_B8G8R8X8_UNORM) ||
+          (format == PIPE_FORMAT_B10G10R10A2_UNORM) || (format == PIPE_FORMAT_R10G10B10A2_UNORM))
          return true;
    }
 
