@@ -163,7 +163,6 @@ compile(void *memctx, const uint32_t *spirv, size_t spirv_size)
    NIR_PASS(_, nir, nir_opt_idiv_const, 16);
 
    msl_lower_textures(nir);
-   msl_lower_nir_late(nir);
 
    optimize(nir);
 
@@ -282,6 +281,7 @@ main(int argc, char **argv)
                   nir_address_format_62bit_generic);
 
          msl_preprocess_nir(s);
+         msl_preprocess_nir_workarounds(nir, 0);
          msl_optimize_nir(nir);
 
          NIR_PASS(_, s, nir_opt_deref);

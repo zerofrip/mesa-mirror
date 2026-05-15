@@ -37,7 +37,7 @@ void si_shader_update_spi_shader_formats(struct si_shader *shader, nir_shader *n
    for (i = 0; i < num_targets; i++) {
       unsigned spi_format = (spi_shader_col_format >> (i * 4)) & 0xf;
 
-      if (spi_format && (colors_written & 1u << num_mrts)) {
+      if (spi_format && (colors_written & 1u << i)) {
          value |= spi_format << (num_mrts * 4);
          num_mrts++;
       }
@@ -390,7 +390,7 @@ void si_get_shader_variant_info(struct si_shader *shader,
           * Reserve register locations for VGPR inputs the PS prolog may need.
           */
          shader->config.spi_ps_input_addr = shader->config.spi_ps_input_ena |
-                                            SI_SPI_PS_INPUT_ADDR_FOR_PROLOG;
+                                            si_get_spi_ps_input_addr_for_prolog(shader->selector);
       }
    }
 
@@ -580,12 +580,6 @@ void si_set_spi_ps_input_config_for_separate_prolog(struct si_shader *shader)
    /* The sample mask fixup has an optimization that replaces the sample mask with the sample ID. */
    if (key->ps.part.prolog.samplemask_log_ps_iter == 3)
       shader->config.spi_ps_input_ena &= C_0286CC_SAMPLE_COVERAGE_ENA;
-
-   if (key->ps.part.prolog.get_frag_coord_from_pixel_coord) {
-      shader->config.spi_ps_input_ena &= C_0286CC_POS_X_FLOAT_ENA;
-      shader->config.spi_ps_input_ena &= C_0286CC_POS_Y_FLOAT_ENA;
-      shader->config.spi_ps_input_ena |= S_0286CC_POS_FIXED_PT_ENA(1);
-   }
 }
 
 void si_fixup_spi_ps_input_config(struct si_shader *shader)
@@ -612,4 +606,51 @@ void si_fixup_spi_ps_input_config(struct si_shader *shader)
       else
          shader->config.spi_ps_input_ena |= S_0286CC_PERSP_SAMPLE_ENA(1);
    }
+}
+
+unsigned si_get_spi_ps_input_addr_for_prolog(struct si_shader_selector *sel)
+{
+   unsigned spi_ps_input_addr = S_0286D0_PERSP_SAMPLE_ENA(1) |
+                                S_0286D0_PERSP_CENTER_ENA(1) |
+                                S_0286D0_FRONT_FACE_ENA(1) |
+                                S_0286D0_POS_FIXED_PT_ENA(1);
+
+   /* This includes color interpolation at centroid even if the main shader part doesn't
+    * use the barycentrics. The PS prolog can still use them.
+    */
+   if (sel->info.uses_sysval_persp_centroid)
+      spi_ps_input_addr |= S_0286D0_PERSP_CENTROID_ENA(1);
+
+   /* The PS prolog can change one to the other, so we need both. */
+   if (sel->info.uses_sysval_linear_sample ||
+       sel->info.uses_sysval_linear_center) {
+      spi_ps_input_addr |= S_0286D0_LINEAR_SAMPLE_ENA(1) |
+                           S_0286D0_LINEAR_CENTER_ENA(1);
+   }
+
+   if (sel->info.uses_sysval_linear_centroid)
+      spi_ps_input_addr |= S_0286D0_LINEAR_CENTROID_ENA(1);
+
+   /* If barycentrics and pos.w aren't used, we may need LINE_STIPPLE_TEX_ENA as the filler
+    * input VGPR. See si_fixup_spi_ps_input_config for more information.
+    */
+   if (!sel->info.uses_sysval_persp_sample &&
+       !sel->info.uses_sysval_persp_center &&
+       !sel->info.uses_sysval_persp_centroid &&
+       !sel->info.uses_sysval_linear_sample &&
+       !sel->info.uses_sysval_linear_center &&
+       !sel->info.uses_sysval_linear_centroid &&
+       !sel->info.uses_sysval_frag_coord_w &&
+       /* We don't set LINE_STIPPLE_TEX_ENA with LLVM, and never on GFX12. */
+       sel->info.base.use_aco_amd &&
+       sel->screen->info.gfx_level != GFX12)
+      spi_ps_input_addr |= S_0286D0_LINE_STIPPLE_TEX_ENA(1);
+
+   if (sel->info.uses_sysval_ancillary)
+      spi_ps_input_addr |= S_0286D0_ANCILLARY_ENA(1);
+
+   if (sel->info.uses_sysval_sample_mask_in)
+      spi_ps_input_addr |= S_0286D0_SAMPLE_COVERAGE_ENA(1);
+
+   return spi_ps_input_addr;
 }

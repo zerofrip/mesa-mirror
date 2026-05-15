@@ -2649,6 +2649,16 @@ system_value("simd_width_intel", 1)
 # IndirectDataStartAddress
 system_value("indirect_address_intel", 1)
 
+# The raw coverage mask as provided in the FS payload.
+# The semantics of it depend on the HW state.
+system_value("coverage_mask_intel", 1)
+
+# MSAA rate provided by the FS payload.
+system_value("msaa_rate_intel", 1)
+
+# Raw fragment shading rate provided to the FS payload.
+system_value("frag_shading_rate_intel", 2)
+
 # Load a relocatable 32-bit value
 intrinsic("load_reloc_const_intel", dest_comp=1, bit_sizes=[32],
           indices=[PARAM_IDX, BASE], flags=[CAN_ELIMINATE, CAN_REORDER])
@@ -2797,8 +2807,12 @@ load("push_data_intel", [1], [BASE, RANGE, ACCESS], [CAN_ELIMINATE, CAN_REORDER]
 # Dynamic tesselation parameters (see intel_tess_config).
 system_value("tess_config_intel", 1)
 
-# Dynamic fragment shader parameters (see intel_fs_config) .
+# Dynamic fragment shader parameters (see intel_fs_config).
 system_value("fs_config_intel", 1)
+
+# Test a bit in fs_config_intel.
+intrinsic("test_fs_config_intel", dest_comp=1, src_comp=[],
+          indices=[BASE], flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # The (linear) local invocation index provided in the payload of mesh/task shaders.
 system_value("local_invocation_index_intel", 1)
@@ -3132,6 +3146,8 @@ intrinsic("is_null_descriptor", src_comp=[-1], dest_comp=1, flags=[CAN_ELIMINATE
 # Represents a pointer to the start of an argument buffer at the
 # given binding
 load("buffer_ptr_kk", [], [BINDING], [CAN_ELIMINATE, CAN_REORDER])
+# Represents a pointer to the start of the per-draw data buffer
+load("per_draw_ptr_kk", [], [], [CAN_ELIMINATE, CAN_REORDER])
 # Opaque texture<T> handle, with DEST_TYPE representing T
 load("texture_handle_kk", [1], [DEST_TYPE, IMAGE_DIM, IMAGE_ARRAY, ACCESS, FLAGS], [CAN_ELIMINATE])
 # Same as above but for depth<T> textures, T is always float

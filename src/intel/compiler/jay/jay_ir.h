@@ -581,7 +581,7 @@ typedef struct jay_inst {
    enum jay_opcode op;
    enum jay_type type; /**< execution type of the instruction */
 
-   /** Software scoreboarding dependencies (for non-SYNC instructions) */
+   /** Software scoreboarding dependencies */
    struct tgl_swsb dep;
 
    /** Number of sources */
@@ -628,12 +628,17 @@ jay_num_isa_srcs(const jay_inst *I)
 }
 
 static inline bool
-jay_uses_flag(const jay_inst *I)
+jay_uses_implicit_flag(const jay_inst *I)
 {
-   return jay_is_flag(I->dst) ||
-          I->predication ||
+   return I->predication ||
           !jay_is_null(I->cond_flag) ||
           I->op == JAY_OPCODE_SEL;
+}
+
+static inline bool
+jay_uses_flag(const jay_inst *I)
+{
+   return jay_is_flag(I->dst) || jay_uses_implicit_flag(I);
 }
 
 static inline void

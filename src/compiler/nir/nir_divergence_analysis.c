@@ -364,6 +364,9 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_call_return_address_amd:
    case nir_intrinsic_load_indirect_address_intel:
    case nir_intrinsic_load_alpha_to_coverage_enable_ir3:
+   case nir_intrinsic_load_frag_shading_rate_intel:
+   case nir_intrinsic_load_msaa_rate_intel:
+   case nir_intrinsic_test_fs_config_intel:
       is_divergent = false;
       break;
 
@@ -811,6 +814,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_urb_vec4_intel:
    case nir_intrinsic_load_urb_lsc_intel:
    case nir_intrinsic_load_buffer_ptr_kk:
+   case nir_intrinsic_load_per_draw_ptr_kk:
    case nir_intrinsic_load_texture_handle_kk:
    case nir_intrinsic_load_depth_texture_kk:
    case nir_intrinsic_load_sampler_handle_kk:
@@ -1007,6 +1011,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_cmat_muladd_amd:
    case nir_intrinsic_dpas_intel:
    case nir_intrinsic_convert_cmat_intel:
+   case nir_intrinsic_load_coverage_mask_intel:
    case nir_intrinsic_isberd_nv:
    case nir_intrinsic_isbewr_nv:
    case nir_intrinsic_vild_nv:
@@ -1632,10 +1637,10 @@ nir_divergence_analysis(nir_shader *shader)
  * pass.
  */
 void
-nir_vertex_divergence_analysis(nir_shader *shader)
+nir_custom_divergence_analysis(nir_shader *shader,
+                               nir_divergence_options options)
 {
-   nir_divergence_options options =
-      shader->options->divergence_analysis_options | nir_divergence_vertex;
+   options |= shader->options->divergence_analysis_options;
 
    nir_foreach_function_impl(impl, shader) {
       nir_divergence_analysis_impl(impl, options);

@@ -16,6 +16,7 @@ extern "C" {
 #define JAY_DBG_PRINTDEMAND BITFIELD_BIT(1)
 #define JAY_DBG_SPILL       BITFIELD_BIT(2)
 #define JAY_DBG_SYNC        BITFIELD_BIT(3)
+#define JAY_DBG_NOACC       BITFIELD_BIT(4)
 extern int jay_debug;
 
 bool jay_nir_lower_bool(nir_shader *nir);
@@ -74,6 +75,7 @@ void jay_lower_post_ra(jay_shader *s);
 void jay_lower_spill(jay_function *func);
 void jay_lower_simd_width(jay_shader *s);
 void jay_lower_scoreboard(jay_shader *s);
+void jay_lower_scoreboard_trivial(jay_shader *s);
 void jay_insert_fp_mode(jay_shader *shader, uint32_t api, uint32_t float_sizes);
 
 struct jay_shader_bin *jay_to_binary(jay_shader *s,

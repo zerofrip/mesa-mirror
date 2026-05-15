@@ -66,14 +66,8 @@ static bool is_alu1_iand_0x1f(nir_alu_instr *alu)
    return false;
 }
 
-static bool
-detect_simd32_shuffle(nir_builder *b,
-                      nir_intrinsic_instr *intrin,
-                      void *data)
+static bool is_simd32_shuffle(nir_intrinsic_instr *intrin)
 {
-   if (intrin->intrinsic != nir_intrinsic_shuffle)
-      return false;
-
    nir_alu_instr *alu1 = nir_src_as_alu(intrin->src[1]);
    if (alu1 == NULL)
       return false;
@@ -87,6 +81,96 @@ detect_simd32_shuffle(nir_builder *b,
    }
 
    return false;
+}
+
+/* Try to detect shaders testing with a sequence like this :
+ *
+ * 32x3    %49 = @load_local_invocation_id
+ * 32    %1673 = load_const (0xffffffe0 = -32 = 4294967264)
+ * 32    %1674 = iand %49.x, %1673 (0xffffffe0)
+ * 32    %1675 = @load_subgroup_size
+ * 32    %1676 = umod %1674, %1675
+ *
+ * This sequence appears to be targetted at subgroup sizes larger than 32. The
+ * problem in this sequence is that subgroup size is expected to be >= 32 to
+ * match the masking of local_invocation_id above. If inferior, the umod
+ * operation returns the same value as if the subgroup was 32.
+ */
+static bool is_alu_used_for_umod_subgroup_size(nir_alu_instr *in_alu)
+{
+   nir_foreach_use(src, &in_alu->def) {
+      nir_instr *instr = nir_src_use_instr(src);
+      if (instr->type != nir_instr_type_alu)
+         continue;
+
+      nir_alu_instr *alu = nir_instr_as_alu(instr);
+      if (alu->op != nir_op_umod &&
+          alu->op != nir_op_imod)
+         continue;
+
+      for (uint32_t i = 0; i < 2; i++) {
+         if (&alu->src[i].src == src)
+            continue;
+
+         if (!nir_src_is_intrinsic(alu->src[i].src) ||
+             nir_src_as_intrinsic(alu->src[i].src)->intrinsic != nir_intrinsic_load_subgroup_size)
+            continue;
+
+         return true;
+      }
+   }
+
+   return false;
+}
+
+static bool
+is_local_invoc_id_used_with_simd32_assumption(nir_intrinsic_instr *subgroup_inv)
+{
+   nir_foreach_use(src, &subgroup_inv->def) {
+      nir_instr *instr = nir_src_use_instr(src);
+      if (instr->type != nir_instr_type_alu)
+         continue;
+
+      nir_alu_instr *alu = nir_instr_as_alu(instr);
+      if (alu->op != nir_op_iand)
+         continue;
+
+      /* nir_print_instr(&alu->instr, stderr); */
+      /* fprintf(stderr, "\n"); */
+
+      for (uint32_t i = 0; i < 2; i++) {
+         if (&alu->src[i].src == src)
+            continue;
+
+         if (!nir_src_is_const(alu->src[i].src))
+            continue;
+
+         if (nir_src_as_uint(alu->src[i].src) != 0xffffffe0)
+            continue;
+
+         if (is_alu_used_for_umod_subgroup_size(alu))
+            return true;
+      }
+   }
+
+   return false;
+}
+
+static bool
+detect_simd32_requirement(nir_builder *b,
+                          nir_intrinsic_instr *intrin,
+                          void *data)
+{
+   switch (intrin->intrinsic) {
+   case nir_intrinsic_shuffle:
+      return is_simd32_shuffle(intrin);
+
+   case nir_intrinsic_load_local_invocation_id:
+      return is_local_invoc_id_used_with_simd32_assumption(intrin);
+
+   default:
+      return false;
+   }
 }
 
 /* List of game-specific workarounds identified by BLAKE3 hash of the shader.
@@ -553,10 +637,20 @@ populate_fs_prog_key(struct brw_fs_prog_key *key,
       key->provoking_vertex_last = INTEL_NEVER;
    }
 
+   if (state != NULL && state->rs != NULL) {
+      key->conservative_raster =
+         BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_RS_CONSERVATIVE_MODE) ?
+         INTEL_SOMETIMES :
+         state->rs->conservative_mode == VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT ?
+         INTEL_NEVER : INTEL_ALWAYS;
+   } else {
+      key->conservative_raster = INTEL_SOMETIMES;
+   }
+
    key->mesh_input =
       (link_stages & VK_SHADER_STAGE_VERTEX_BIT) ? INTEL_NEVER :
       (link_stages & VK_SHADER_STAGE_MESH_BIT_EXT) ? INTEL_ALWAYS :
-      pdevice->info.verx10 >= 125 ? INTEL_SOMETIMES : INTEL_NEVER;
+      pdevice->info.has_mesh_shading ? INTEL_SOMETIMES : INTEL_NEVER;
 
    if (state && state->ms) {
       key->min_sample_shading = state->ms->min_sample_shading;
@@ -818,7 +912,7 @@ anv_fixup_subgroup_size(struct anv_device *device, nir_shader *shader)
        info->min_subgroup_size != info->max_subgroup_size &&
        info->uses_wide_subgroup_intrinsics &&
        nir_shader_intrinsics_pass(shader,
-                                  detect_simd32_shuffle,
+                                  detect_simd32_requirement,
                                   nir_metadata_all,
                                   NULL)) {
       info->max_subgroup_size = BRW_SUBGROUP_SIZE;
@@ -1434,14 +1528,16 @@ anv_shader_lower_nir(struct anv_device *device,
 
    /* Workaround for apps that need fp64 support */
    if (device->fp64_nir) {
-      NIR_PASS(_, nir, nir_lower_doubles, device->fp64_nir,
+      nir_shader *fp64_nir = anv_ensure_fp64_shader(device);
+
+      NIR_PASS(_, nir, nir_lower_doubles, fp64_nir,
                nir->options->lower_doubles_options);
 
       bool fp_conv = false;
       NIR_PASS(fp_conv, nir, nir_lower_int64_float_conversions);
       if (fp_conv) {
          NIR_PASS(_, nir, nir_opt_algebraic);
-         NIR_PASS(_, nir, nir_lower_doubles, device->fp64_nir,
+         NIR_PASS(_, nir, nir_lower_doubles, fp64_nir,
                   nir->options->lower_doubles_options);
       }
    }

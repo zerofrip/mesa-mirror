@@ -168,6 +168,8 @@ extern const struct pan_blendable_format
    pan_blendable_formats_v12[PIPE_FORMAT_COUNT];
 extern const struct pan_blendable_format
    pan_blendable_formats_v13[PIPE_FORMAT_COUNT];
+extern const struct pan_blendable_format
+   pan_blendable_formats_v14[PIPE_FORMAT_COUNT];
 
 uint8_t pan_raw_format_mask_midgard(enum pipe_format *formats);
 
@@ -184,6 +186,7 @@ pan_blendable_format_table(unsigned arch)
    FMT_TABLE(10);
    FMT_TABLE(12);
    FMT_TABLE(13);
+   FMT_TABLE(14);
 #undef FMT_TABLE
    default:
       assert(!"Unsupported architecture");
@@ -199,6 +202,7 @@ extern const struct pan_format pan_pipe_format_v9[PIPE_FORMAT_COUNT];
 extern const struct pan_format pan_pipe_format_v10[PIPE_FORMAT_COUNT];
 extern const struct pan_format pan_pipe_format_v12[PIPE_FORMAT_COUNT];
 extern const struct pan_format pan_pipe_format_v13[PIPE_FORMAT_COUNT];
+extern const struct pan_format pan_pipe_format_v14[PIPE_FORMAT_COUNT];
 
 static inline const struct pan_format *
 pan_format_table(unsigned arch)
@@ -213,6 +217,7 @@ pan_format_table(unsigned arch)
    FMT_TABLE(10);
    FMT_TABLE(12);
    FMT_TABLE(13);
+   FMT_TABLE(14);
 #undef FMT_TABLE
    default:
       assert(!"Unsupported architecture");

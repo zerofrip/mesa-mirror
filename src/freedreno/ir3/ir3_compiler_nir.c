@@ -3028,28 +3028,16 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
       break;
    case nir_intrinsic_load_base_vertex:
    case nir_intrinsic_load_first_vertex:
-      if (!ctx->basevertex) {
-         ctx->basevertex = create_driver_param(ctx, IR3_DP_VS(vtxid_base));
-      }
-      dst[0] = ctx->basevertex;
+      dst[0] = create_driver_param(ctx, IR3_DP_VS(vtxid_base));
       break;
    case nir_intrinsic_load_is_indexed_draw:
-      if (!ctx->is_indexed_draw) {
-         ctx->is_indexed_draw = create_driver_param(ctx, IR3_DP_VS(is_indexed_draw));
-      }
-      dst[0] = ctx->is_indexed_draw;
+      dst[0] = create_driver_param(ctx, IR3_DP_VS(is_indexed_draw));
       break;
    case nir_intrinsic_load_draw_id:
-      if (!ctx->draw_id) {
-         ctx->draw_id = create_driver_param(ctx, IR3_DP_VS(draw_id));
-      }
-      dst[0] = ctx->draw_id;
+      dst[0] = create_driver_param(ctx, IR3_DP_VS(draw_id));
       break;
    case nir_intrinsic_load_base_instance:
-      if (!ctx->base_instance) {
-         ctx->base_instance = create_driver_param(ctx, IR3_DP_VS(instid_base));
-      }
-      dst[0] = ctx->base_instance;
+      dst[0] = create_driver_param(ctx, IR3_DP_VS(instid_base));
       break;
    case nir_intrinsic_load_view_index:
       if (!ctx->view_index) {
@@ -3506,8 +3494,6 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
       break;
    }
    case nir_intrinsic_prefetch_ubo_ir3: {
-      if (!ir3_bindless_resource(intr->src[0]))
-         break;
       struct ir3_instruction *offset = create_immed(b, 0);
       struct ir3_instruction *idx = ir3_get_src(ctx, &intr->src[0])[0];
       struct ir3_instruction *ldc = ir3_LDC(b, idx, 0, offset, 0);

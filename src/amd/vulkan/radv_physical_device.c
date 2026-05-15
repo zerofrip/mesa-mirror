@@ -731,6 +731,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .KHR_maintenance8 = true,
       .KHR_maintenance9 = true,
       .KHR_maintenance10 = true,
+      .KHR_maintenance11 = true,
       .KHR_map_memory2 = true,
       .KHR_multiview = true,
       .KHR_performance_query = radv_perf_query_supported(pdev),
@@ -1611,6 +1612,9 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
 
       /* VK_KHR_shader_constant_data */
       .shaderConstantData = true,
+
+      /* VK_KHR_maintenance11 */
+      .maintenance11 = true,
    };
 }
 
@@ -2103,7 +2107,7 @@ radv_get_physical_device_properties(struct radv_physical_device *pdev)
       .maxFragmentShadingRateAttachmentTexelSize = vrs_texel_extent,
       .maxFragmentShadingRateAttachmentTexelSizeAspectRatio = 1,
       .primitiveFragmentShadingRateWithMultipleViewports = true,
-      .layeredShadingRateAttachments = false, /* TODO */
+      .layeredShadingRateAttachments = false,
       .fragmentShadingRateNonTrivialCombinerOps = true,
       .maxFragmentSize = (VkExtent2D){2, 2},
       .maxFragmentSizeAspectRatio = 2,
@@ -2920,7 +2924,7 @@ radv_get_physical_device_queue_family_properties(struct radv_physical_device *pd
                           radv_queue_family_protected_flag(pdev, RADV_QUEUE_TRANSFER),
             .queueCount = pdev->info.ip[AMD_IP_SDMA].num_queues,
             .timestampValidBits = 64,
-            .minImageTransferGranularity = (VkExtent3D){16, 16, 8},
+            .minImageTransferGranularity = (VkExtent3D){1, 1, 1},
          };
          idx++;
       }
@@ -3027,6 +3031,16 @@ radv_GetPhysicalDeviceQueueFamilyProperties2(VkPhysicalDevice physicalDevice, ui
          case VK_STRUCTURE_TYPE_QUEUE_FAMILY_OWNERSHIP_TRANSFER_PROPERTIES_KHR: {
             VkQueueFamilyOwnershipTransferPropertiesKHR *prop = (VkQueueFamilyOwnershipTransferPropertiesKHR *)ext;
             prop->optimalImageTransferToQueueFamilies = ~0;
+            break;
+         }
+         case VK_STRUCTURE_TYPE_QUEUE_FAMILY_OPTIMAL_IMAGE_TRANSFER_GRANULARITY_PROPERTIES_KHR: {
+            VkQueueFamilyOptimalImageTransferGranularityPropertiesKHR *prop =
+               (VkQueueFamilyOptimalImageTransferGranularityPropertiesKHR *)ext;
+            if (pQueueFamilyProperties[i].queueFamilyProperties.queueFlags & VK_QUEUE_TRANSFER_BIT) {
+               prop->optimalImageTransferGranularity = (VkExtent3D){16, 16, 8};
+            } else {
+               prop->optimalImageTransferGranularity = (VkExtent3D){1, 1, 1};
+            }
             break;
          }
          default:

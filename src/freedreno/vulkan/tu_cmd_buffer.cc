@@ -98,6 +98,26 @@ tu_cmd_buffer_status_gpu_write(struct tu_cmd_buffer *cmd_buffer,
    tu_cs_emit(cs, (uint32_t)status);
 }
 
+static void
+tu_wait_for_rb_done(struct tu_cs *cs, uint32_t onchip_addr, uint32_t seqno)
+{
+   tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 4);
+   tu_cs_emit(cs, CP_EVENT_WRITE7_0(
+      .event = RB_DONE_TS,
+      .write_src = EV_WRITE_USER_32B,
+      .write_dst = EV_DST_ONCHIP,
+      .write_enabled = true).value);
+   tu_cs_emit_qw(cs, onchip_addr);
+   tu_cs_emit(cs, seqno);
+
+   tu_cs_emit_pkt7(cs, CP_WAIT_REG_MEM, 6);
+   tu_cs_emit(cs, CP_WAIT_REG_MEM_0_FUNCTION(WRITE_EQ) | CP_WAIT_REG_MEM_0_POLL(POLL_ON_CHIP));
+   tu_cs_emit_qw(cs, onchip_addr);
+   tu_cs_emit(cs, CP_WAIT_REG_MEM_3_REF(seqno));
+   tu_cs_emit(cs, CP_WAIT_REG_MEM_4_MASK(~0u));
+   tu_cs_emit(cs, CP_WAIT_REG_MEM_5_DELAY_LOOP_CYCLES(2));
+}
+
 template <chip CHIP>
 static void
 tu_clone_trace_range(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
@@ -117,21 +137,14 @@ tu_clone_trace_range(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
       static uint32_t seqno = 0;
       uint32_t value = p_atomic_add_return(&seqno, 1);
 
-      tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 4);
-      tu_cs_emit(cs, CP_EVENT_WRITE7_0(
-         .event = RB_DONE_TS,
-         .write_src = EV_WRITE_USER_32B,
-         .write_dst = EV_DST_ONCHIP,
-         .write_enabled = true).value);
-      tu_cs_emit_qw(cs, TU_ONCHIP_U_TRACE_BARRIER);
-      tu_cs_emit(cs, value);
+      /* BV can race BR so we cannot wait on the same addr in both since it can be overwritten. */
+      tu_cond_exec_start(cs, CP_COND_REG_EXEC_0_MODE(THREAD_MODE) | CP_COND_REG_EXEC_0_BR);
+      tu_wait_for_rb_done(cs, TU_ONCHIP_BR_U_TRACE_BARRIER, value);
+      tu_cond_exec_end(cs);
 
-      tu_cs_emit_pkt7(cs, CP_WAIT_REG_MEM, 6);
-      tu_cs_emit(cs, CP_WAIT_REG_MEM_0_FUNCTION(WRITE_EQ) | CP_WAIT_REG_MEM_0_POLL(POLL_ON_CHIP));
-      tu_cs_emit_qw(cs, TU_ONCHIP_U_TRACE_BARRIER);
-      tu_cs_emit(cs, CP_WAIT_REG_MEM_3_REF(value));
-      tu_cs_emit(cs, CP_WAIT_REG_MEM_4_MASK(~0u));
-      tu_cs_emit(cs, CP_WAIT_REG_MEM_5_DELAY_LOOP_CYCLES(2));
+      tu_cond_exec_start(cs, CP_COND_REG_EXEC_0_MODE(THREAD_MODE) | CP_COND_REG_EXEC_0_BV);
+      tu_wait_for_rb_done(cs, TU_ONCHIP_BV_U_TRACE_BARRIER, value);
+      tu_cond_exec_end(cs);
    }
 
    tu_cs_emit_wfi(cs);
@@ -492,7 +505,7 @@ tu_emit_cache_flush(struct tu_cmd_buffer *cmd_buffer)
 
    if ((flushes & TU_CMD_FLAG_WAIT_FOR_BR) && CHIP >= A7XX &&
        !(cmd_buffer->state.pass && cmd_buffer->state.renderpass_cb_disabled) &&
-       !TU_DEBUG(NO_CONCURRENT_BINNING)) {
+       cmd_buffer->device->instance->allow_concurrent_binning) {
       trace_start_concurrent_binning_barrier(&cmd_buffer->trace, cs, cmd_buffer);
 
       /* Wait-for-BR when repeated a lot of times per frame can add up
@@ -2254,8 +2267,8 @@ tu6_init_static_regs(struct tu_device *dev, struct tu_cs *cs)
    if (CHIP >= A8XX)
       tu_cs_emit_regs(cs, SP_ALPHA_TEST_CNTL(CHIP));
 
-   tu_cs_emit_regs(cs, A6XX_TPL1_GFX_BORDER_COLOR_BASE(.qword = dev->global_bo->iova + gb_offset(bcolor)));
-   tu_cs_emit_regs(cs, A6XX_TPL1_CS_BORDER_COLOR_BASE(.qword = dev->global_bo->iova + gb_offset(bcolor)));
+   tu_cs_emit_regs(cs, A6XX_TPL1_GFX_BORDER_COLOR_BASE(.qword = dev->global_bo->iova + gb_offset(bcolor_builtin)));
+   tu_cs_emit_regs(cs, A6XX_TPL1_CS_BORDER_COLOR_BASE(.qword = dev->global_bo->iova + gb_offset(bcolor_builtin)));
 
    /* BR-only registers */
    /* non-ctx regs programmed by KMD (and blocked from UMD) on gen8+ */
@@ -3112,8 +3125,8 @@ tu7_emit_concurrent_binning_start(struct tu_cmd_buffer *cmd,
        tu7_cb_disable_reason(
           (!cmd->state.lrz.fast_clear && cmd->state.lrz.image_view), cmd,
           "LRZ fast clear disabled") ||
-       tu7_cb_disable_reason(TU_DEBUG(NO_CONCURRENT_BINNING), cmd,
-                             "TU_DEBUG(NO_CONCURRENT_BINNING)")) {
+       tu7_cb_disable_reason(!cmd->device->instance->allow_concurrent_binning, cmd,
+                             "globally disabled")) {
      tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |
                     CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);

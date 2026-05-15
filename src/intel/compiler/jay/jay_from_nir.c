@@ -40,6 +40,7 @@ static const struct debug_named_value jay_debug_options[] = {
    { "printdemand", JAY_DBG_PRINTDEMAND, "Print demand per instruction"          },
    { "spill",       JAY_DBG_SPILL,       "Shrink register file to test spilling" },
    { "sync",        JAY_DBG_SYNC,        "Sync after every instruction"          },
+   { "noacc",       JAY_DBG_NOACC,       "Disable accumulator substitution"      },
    DEBUG_NAMED_VALUE_END
 };
 
@@ -482,8 +483,15 @@ jay_emit_alu(struct nir_to_jay_state *nj, nir_alu_instr *alu)
    }
 
    case nir_op_pack_32_2x16_split:
-      /* TODO: Optimize */
-      jay_BFI2(b, dst, 0xffff0000, src[1], src[0]);
+      if (nir_src_is_const(alu->src[0].src) &&
+          nir_alu_src_as_uint(alu->src[0]) == 0) {
+
+         /* pack_32_2x16_split(0, x) is just a shift. This saves a constant. */
+         jay_SHL(b, JAY_TYPE_U32, dst, src[1], 16);
+      } else {
+         /* TODO: Optimize */
+         jay_BFI2(b, dst, 0xffff0000, src[1], src[0]);
+      }
       break;
 
    case nir_op_pack_64_2x32_split:
@@ -752,8 +760,8 @@ jay_emit_fb_write(jay_builder *b, nir_intrinsic_instr *intr)
       nir_src_is_const(intr->src[2]) && nir_src_as_bool(intr->src[2]);
 
    for (unsigned i = 0; i < nir_src_num_components(intr->src[0]); ++i) {
-      srcs[i] = trivial ? jay_INDETERMINATE_u32(b) :
-                          jay_as_gpr(b, jay_extract(data, i));
+      srcs[i] =
+         trivial ? jay_UNDEF_u32(b) : jay_as_gpr(b, jay_extract(data, i));
    }
 
    jay_inst *send =
@@ -1013,6 +1021,13 @@ jay_emit_mem_access(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
                    lsc_bits_to_data_size(ndata->bit_size),
                    cmask ? BITFIELD_MASK(nr) : nr, transpose, cache);
 
+   /* Unlike most SENDs, we may skip the destination of atomics. We do this here
+    * instead of DCE so we don't need to fix up message descriptors later.
+    */
+   if (nir_intrinsic_has_atomic_op(intr) && nir_def_is_unused(&intr->def)) {
+      dst = jay_null();
+   }
+
    jay_def tmp = dst;
 
    if (dst.file == UGPR) {
@@ -1228,7 +1243,7 @@ jay_emit_intrinsic(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
          JAY_TYPE_U32;
       break;
 
-   case nir_intrinsic_load_sample_mask_in: {
+   case nir_intrinsic_load_coverage_mask_intel: {
       jay_def mask = jay_extract(nj->payload.u0, 15);
 
       if (nj->s->dispatch_width == 32) {
@@ -1467,6 +1482,7 @@ jay_emit_intrinsic(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
 
    case nir_intrinsic_load_inline_data_intel: {
       assert(cs && f->is_entrypoint && "todo: this needs ABI");
+      assert(nir_src_as_uint(intr->src[0]) == 0 && "TODO: indirects");
 
       unsigned offset = nir_intrinsic_base(intr) / 4;
       unsigned nr = jay_num_values(dst);
@@ -2075,7 +2091,7 @@ jay_emit_instr(struct nir_to_jay_state *nj, jay_block *block, nir_instr *instr)
          if (instr->type == nir_instr_type_phi) {
             jay_PHI_DST(&nj->bld, jay_extract(def, c));
          } else {
-            jay_INDETERMINATE(&nj->bld, jay_extract(def, c));
+            jay_UNDEF(&nj->bld, jay_extract(def, c));
          }
       }
 
@@ -2677,11 +2693,22 @@ jay_compile(const struct intel_device_info *devinfo,
             nir->info.bit_sizes_float);
 
    if (!(jay_debug & JAY_DBG_NOOPT)) {
+      /* jay_assign_accumulators uses a conservative liveness analysis for
+       * predication, so assign accumulators before predicating for better
+       * results.
+       */
+      if (!(jay_debug & JAY_DBG_NOACC)) {
+         JAY_PASS(s, jay_assign_accumulators);
+      }
+
       JAY_PASS(s, jay_opt_predicate);
-      JAY_PASS(s, jay_assign_accumulators);
    }
 
-   JAY_PASS(s, jay_lower_scoreboard);
+   if (jay_debug & JAY_DBG_SYNC) {
+      JAY_PASS(s, jay_lower_scoreboard_trivial);
+   } else {
+      JAY_PASS(s, jay_lower_scoreboard);
+   }
 
    if (debug) {
       fprintf(stdout, "Jay shader (post-RA):\n\n");

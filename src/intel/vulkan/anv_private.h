@@ -1735,20 +1735,21 @@ anv_physical_device_has_vram(const struct anv_physical_device *device)
 }
 
 enum anv_debug {
-   ANV_DEBUG_BINDLESS          = BITFIELD_BIT(0),
-   ANV_DEBUG_NO_GPL            = BITFIELD_BIT(1),
-   ANV_DEBUG_NO_SECONDARY_CALL = BITFIELD_BIT(2),
-   ANV_DEBUG_NO_SPARSE         = BITFIELD_BIT(3),
-   ANV_DEBUG_SPARSE_TRTT       = BITFIELD_BIT(4),
-   ANV_DEBUG_VIDEO_DECODE      = BITFIELD_BIT(5),
-   ANV_DEBUG_VIDEO_ENCODE      = BITFIELD_BIT(6),
-   ANV_DEBUG_SHADER_HASH       = BITFIELD_BIT(7),
-   ANV_DEBUG_NO_SLAB           = BITFIELD_BIT(8),
-   ANV_DEBUG_DESCRIPTOR_DIRTY  = BITFIELD_BIT(9),
-   ANV_DEBUG_SHADER_PRINT      = BITFIELD_BIT(10),
-   ANV_DEBUG_SHADER_DUMP       = BITFIELD_BIT(11),
-   ANV_DEBUG_EXPERIMENTAL      = BITFIELD_BIT(12),
-   ANV_DEBUG_DGC_DUMP          = BITFIELD_BIT(13),
+   ANV_DEBUG_BINDLESS                   = BITFIELD_BIT(0),
+   ANV_DEBUG_NO_GPL                     = BITFIELD_BIT(1),
+   ANV_DEBUG_NO_SECONDARY_CALL          = BITFIELD_BIT(2),
+   ANV_DEBUG_NO_SPARSE                  = BITFIELD_BIT(3),
+   ANV_DEBUG_SPARSE_TRTT                = BITFIELD_BIT(4),
+   ANV_DEBUG_VIDEO_DECODE               = BITFIELD_BIT(5),
+   ANV_DEBUG_VIDEO_ENCODE               = BITFIELD_BIT(6),
+   ANV_DEBUG_SHADER_HASH                = BITFIELD_BIT(7),
+   ANV_DEBUG_NO_SLAB                    = BITFIELD_BIT(8),
+   ANV_DEBUG_DESCRIPTOR_DIRTY           = BITFIELD_BIT(9),
+   ANV_DEBUG_SHADER_PRINT               = BITFIELD_BIT(10),
+   ANV_DEBUG_SHADER_DUMP                = BITFIELD_BIT(11),
+   ANV_DEBUG_EXPERIMENTAL               = BITFIELD_BIT(12),
+   ANV_DEBUG_DGC_DUMP                   = BITFIELD_BIT(13),
+   ANV_DEBUG_NO_ALLOC_OVER_SUBSCRIPTION = BITFIELD_BIT(14),
 };
 
 extern enum anv_debug anv_debug;
@@ -1766,7 +1767,6 @@ struct anv_instance {
     struct driOptionCache                       dri_options;
     struct driOptionCache                       available_dri_options;
 
-    int                                         mesh_conv_prim_attrs_to_vert_attrs;
     bool                                        enable_tbimr;
     bool                                        enable_vf_distribution;
     bool                                        enable_te_distribution;
@@ -1774,6 +1774,7 @@ struct anv_instance {
     bool                                        force_guc_low_latency;
     bool                                        emulate_read_without_format;
     bool                                        promote_cbv_to_push_buffers;
+    bool                                        enable_fully_covered;
 
     /**
      * Workarounds for game bugs.
@@ -1920,8 +1921,8 @@ anv_device_upload_nir(struct anv_device *device,
                       const struct nir_shader *nir,
                       unsigned char blake3_key[BLAKE3_KEY_LEN]);
 
-void
-anv_load_fp64_shader(struct anv_device *device);
+nir_shader *
+anv_ensure_fp64_shader(struct anv_device *device);
 
 /**
  * This enum tracks the various HW instructions that hold graphics state
@@ -2727,6 +2728,7 @@ struct anv_device {
 
     struct intel_ds_device                       ds;
 
+    simple_mtx_t                                 fp64_mutex;
     nir_shader                                  *fp64_nir;
 
     uint32_t                                    draw_call_count;

@@ -86,6 +86,7 @@ static const driOptionDescription anv_dri_options[] = {
                      DRI_CONF_ENUM(2048,  "2048 clocks")
                      DRI_CONF_ENUM(4096,  "4096 clocks"))
       DRI_CONF_ANV_UPPER_BOUND_DESCRIPTOR_POOL_SAMPLER(false)
+      DRI_CONF_ANV_ENABLE_FULLY_COVERED(false)
    DRI_CONF_SECTION_END
 
    DRI_CONF_SECTION_DEBUG
@@ -118,19 +119,20 @@ static const driOptionDescription anv_dri_options[] = {
 };
 
 static const struct debug_control debug_control[] = {
-   { "bindless",     ANV_DEBUG_BINDLESS},
-   { "desc-dirty",   ANV_DEBUG_DESCRIPTOR_DIRTY},
-   { "dgc-dump",     ANV_DEBUG_DGC_DUMP},
-   { "experimental", ANV_DEBUG_EXPERIMENTAL},
-   { "no-gpl",       ANV_DEBUG_NO_GPL},
-   { "no-slab",      ANV_DEBUG_NO_SLAB},
-   { "no-sparse",    ANV_DEBUG_NO_SPARSE},
-   { "sparse-trtt",  ANV_DEBUG_SPARSE_TRTT},
-   { "video-decode", ANV_DEBUG_VIDEO_DECODE},
-   { "video-encode", ANV_DEBUG_VIDEO_ENCODE},
-   { "shader-dump",  ANV_DEBUG_SHADER_DUMP},
-   { "shader-hash",  ANV_DEBUG_SHADER_HASH},
-   { "shader-print", ANV_DEBUG_SHADER_PRINT},
+   { "bindless",                  ANV_DEBUG_BINDLESS},
+   { "desc-dirty",                ANV_DEBUG_DESCRIPTOR_DIRTY},
+   { "dgc-dump",                  ANV_DEBUG_DGC_DUMP},
+   { "experimental",              ANV_DEBUG_EXPERIMENTAL},
+   { "no-gpl",                    ANV_DEBUG_NO_GPL},
+   { "no-alloc-oversubscription", ANV_DEBUG_NO_ALLOC_OVER_SUBSCRIPTION},
+   { "no-slab",                   ANV_DEBUG_NO_SLAB},
+   { "no-sparse",                 ANV_DEBUG_NO_SPARSE},
+   { "sparse-trtt",               ANV_DEBUG_SPARSE_TRTT},
+   { "video-decode",              ANV_DEBUG_VIDEO_DECODE},
+   { "video-encode",              ANV_DEBUG_VIDEO_ENCODE},
+   { "shader-dump",               ANV_DEBUG_SHADER_DUMP},
+   { "shader-hash",               ANV_DEBUG_SHADER_HASH},
+   { "shader-print",              ANV_DEBUG_SHADER_PRINT},
    { NULL,    0 }
 };
 
@@ -295,6 +297,8 @@ anv_init_dri_options(struct anv_instance *instance)
        driQueryOptionb(&instance->dri_options, "anv_barrier_post_untyped_clear_shader");
     instance->disable_push_constant_alloc =
        driQueryOptionb(&instance->dri_options, "intel_disable_push_constant_alloc");
+    instance->enable_fully_covered =
+       driQueryOptionb(&instance->dri_options, "anv_enable_fully_covered");
 
     if (instance->vk.app_info.engine_name &&
         !strcmp(instance->vk.app_info.engine_name, "DXVK")) {

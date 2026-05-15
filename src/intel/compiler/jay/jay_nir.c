@@ -51,7 +51,7 @@ lower_helper_invocation(nir_builder *b, nir_intrinsic_instr *intr, void *_)
    /* TODO: Is this right for multisampling? */
    b->cursor = nir_before_instr(&intr->instr);
    nir_def *active =
-      nir_inot(b, nir_inverse_ballot(b, nir_load_sample_mask_in(b)));
+      nir_inot(b, nir_inverse_ballot(b, nir_load_coverage_mask_intel(b)));
 
    nir_def_replace(&intr->def, active);
    return true;
@@ -142,6 +142,7 @@ collect_fragment_output(nir_builder *b, nir_intrinsic_instr *intr, void *ctx_)
 
    gl_frag_result loc = nir_intrinsic_io_semantics(intr).location;
    assert(!nir_intrinsic_io_semantics(intr).dual_source_blend_index && "todo");
+   assert(loc != FRAG_RESULT_DUAL_SRC_BLEND && "todo");
    nir_def **out;
    if (loc == FRAG_RESULT_COLOR) {
       out = &ctx->colour[0];
@@ -262,29 +263,24 @@ lower_fragment_outputs(nir_function_impl *impl,
    nir_builder *b = &b_;
    assert(nr_color_regions <= ARRAY_SIZE(ctx.colour));
 
-   signed first = -1;
-   for (unsigned i = 0; i < ARRAY_SIZE(ctx.colour); ++i) {
+   signed last = -1;
+   for (signed i = nr_color_regions - 1; i >= 0; --i) {
       if (ctx.colour[i]) {
-         first = i;
+         last = i;
          break;
       }
    }
 
-   /* Do the later render targets first */
-   for (unsigned i = first + 1; i < nr_color_regions; ++i) {
+   for (signed i = 0; i < last; ++i) {
       if (ctx.colour[i]) {
-         insert_rt_store(b, devinfo, i, false, ctx.colour[i], NULL, NULL, NULL,
-                         NULL, dispatch_width);
+         insert_rt_store(b, devinfo, i, false, ctx.colour[i], NULL, ctx.depth,
+                         ctx.stencil, ctx.sample_mask, dispatch_width);
       }
    }
 
-   /* Finally do render target zero attaching all the sideband things and
-    * setting the LastRT bit. This needs to exist even if nothing is written
-    * since it also signals end-of-thread.
-    */
-   insert_rt_store(b, devinfo, first < nr_color_regions ? first : -1, true,
-                   first >= 0 ? ctx.colour[first] : NULL, NULL, ctx.depth,
-                   ctx.stencil, ctx.sample_mask, dispatch_width);
+   insert_rt_store(b, devinfo, last, true, last >= 0 ? ctx.colour[last] : NULL,
+                   NULL, ctx.depth, ctx.stencil, ctx.sample_mask,
+                   dispatch_width);
 }
 
 unsigned
@@ -396,26 +392,12 @@ jay_process_nir(const struct intel_device_info *devinfo,
       // TODO
       // NIR_PASS(_, nir, brw_nir_move_interpolation_to_top);
 
-      if (!brw_fs_prog_key_is_dynamic(&key->fs)) {
-         uint32_t f = 0;
+      /* Do this before lower_fs_config_intel so that the pass has the right
+       * information.
+       */
+      jay_populate_prog_data(devinfo, nir, prog_data, key, 0);
 
-         if (key->fs.multisample_fbo == INTEL_ALWAYS)
-            f |= INTEL_FS_CONFIG_MULTISAMPLE_FBO;
-
-         if (key->fs.alpha_to_coverage == INTEL_ALWAYS)
-            f |= INTEL_FS_CONFIG_ALPHA_TO_COVERAGE;
-
-         if (key->fs.provoking_vertex_last == INTEL_ALWAYS)
-            f |= INTEL_FS_CONFIG_PROVOKING_VERTEX_LAST;
-
-         if (key->fs.persample_interp == INTEL_ALWAYS) {
-            f |= INTEL_FS_CONFIG_PERSAMPLE_DISPATCH |
-                 INTEL_FS_CONFIG_PERSAMPLE_INTERP;
-         }
-
-         NIR_PASS(_, nir, nir_inline_sysval, nir_intrinsic_load_fs_config_intel,
-                  f);
-      }
+      NIR_PASS(_, nir, brw_nir_lower_fs_config_intel, &key->fs, &prog_data->fs);
    } else {
       brw_nir_apply_key(pt, &key->base, simd_width);
    }
@@ -469,6 +451,7 @@ jay_process_nir(const struct intel_device_info *devinfo,
    nj_index_ssa_defs(nir);
    nir_divergence_analysis(nir);
 
-   jay_populate_prog_data(devinfo, nir, prog_data, key, nr_packed_regs);
+   if (stage != MESA_SHADER_FRAGMENT)
+      jay_populate_prog_data(devinfo, nir, prog_data, key, nr_packed_regs);
    return simd_width;
 }

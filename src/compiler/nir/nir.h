@@ -5892,8 +5892,21 @@ typedef enum {
    nir_move_to_entry_block_only = BITFIELD_BIT(0),
 
    /* Instruction options. */
-   nir_move_to_top_input_loads = BITFIELD_BIT(1),
-   nir_move_to_top_load_smem_amd = BITFIELD_BIT(2),
+
+   /* Simple input loads are non-interpolated loads and interpolated loads
+    * with pixel, centroid, and sample barycentrics. Other barycentrics are
+    * excluded.
+    */
+   nir_move_to_top_input_loads_simple = BITFIELD_BIT(1),
+
+   /* Interpolated loads with non-trivial barycentrics, such as at_offset and
+    * at_sample. (this option is not recommended for Control (game) because
+    * it moves at_sample with complex ALU perspective-correct interpolation
+    * out of conditional blocks)
+    */
+   nir_move_to_top_input_loads_complex_baryc = BITFIELD_BIT(2),
+
+   nir_move_to_top_load_smem_amd = BITFIELD_BIT(3),
 } nir_opt_move_to_top_options;
 
 bool nir_opt_move_to_top(nir_shader *nir, nir_opt_move_to_top_options options);
@@ -6627,7 +6640,7 @@ void nir_convert_loop_to_lcssa(nir_loop *loop);
 bool nir_convert_to_lcssa(nir_shader *shader, bool skip_invariants, bool skip_bool_invariants);
 void nir_divergence_analysis_impl(nir_function_impl *impl, nir_divergence_options options);
 void nir_divergence_analysis(nir_shader *shader);
-void nir_vertex_divergence_analysis(nir_shader *shader);
+void nir_custom_divergence_analysis(nir_shader *shader, nir_divergence_options options);
 bool nir_has_divergent_loop(nir_shader *shader);
 
 void
@@ -6755,7 +6768,11 @@ bool nir_opt_large_constants(nir_shader *shader,
                              glsl_type_size_align_func size_align,
                              unsigned threshold);
 
-bool nir_opt_licm(nir_shader *shader);
+typedef bool (*nir_opt_licm_filter_cb)(nir_instr *instr, nir_loop *loop,
+                                       bool instr_block_dominates_exit);
+
+bool nir_opt_licm(nir_shader *shader,
+                  nir_opt_licm_filter_cb filter);
 bool nir_opt_loop(nir_shader *shader);
 
 bool nir_opt_loop_unroll(nir_shader *shader);

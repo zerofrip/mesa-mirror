@@ -69,6 +69,13 @@ struct kk_descriptor_state {
    struct kk_push_descriptor_set *push[KK_MAX_SETS];
 };
 
+struct kk_per_draw_data {
+   /* Mask of stages that need per-draw data uploaded */
+   uint32_t upload_mask;
+
+   uint32_t draw_id;
+};
+
 struct kk_attachment {
    VkFormat vk_format;
    struct kk_image_view *iview;
@@ -112,10 +119,11 @@ struct kk_graphics_state {
    mtl_render_pass_descriptor *render_pass_descriptor;
    bool is_depth_stencil_dynamic;
    bool is_cull_front_and_back;
+   bool is_ms_bresenham_lines;
    bool need_to_start_render_pass;
 
    enum kk_dirty dirty;
-   uint32_t sample_count;
+   uint32_t pipeline_sample_count;
 
    struct {
       enum mtl_visibility_result_mode mode;

@@ -686,8 +686,7 @@ void util_blitter_restore_fragment_states(struct blitter_context *blitter)
     * (depending on the operation) */
    pipe->set_stencil_ref(pipe, ctx->base.saved_stencil_ref);
 
-   if (!blitter->skip_viewport_restore)
-      pipe->set_viewport_states(pipe, 0, 1, &ctx->base.saved_viewport);
+   pipe->set_viewport_states(pipe, 0, 1, &ctx->base.saved_viewport);
 
    if (blitter->saved_num_window_rectangles) {
       pipe->set_window_rectangles(pipe,
@@ -969,7 +968,7 @@ static void *blitter_get_fs_texfetch_col(struct blitter_context_priv *ctx,
    enum tgsi_return_type dtype;
    unsigned type;
 
-   assert(target < PIPE_MAX_TEXTURE_TYPES);
+   assert(target >= 0 && target < PIPE_MAX_TEXTURE_TYPES);
 
    if (util_format_is_pure_uint(src_format)) {
       stype = TGSI_RETURN_TYPE_UINT;

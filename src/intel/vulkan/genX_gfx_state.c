@@ -873,6 +873,7 @@ update_fs_config(struct anv_gfx_dynamic_state *hw_state,
             .per_primitive_remapping   = mesh_prog_data &&
                                          mesh_prog_data->map.wa_18019110168_active,
 #endif
+            .conservative_raster       = dyn->rs.conservative_mode != VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT,
          });
 
    SET(FS_CONFIG, fs_config, fs_config);
@@ -1093,6 +1094,8 @@ update_ps_extra_wm(struct anv_gfx_dynamic_state *hw_state,
    assert(!fs_prog_data->inner_coverage); /* Not available in SPIR-V */
    if (!fs_prog_data->uses_sample_mask)
       InputCoverageMaskState = ICMS_NONE;
+   else if (fs_prog_data->uses_fully_covered)
+      InputCoverageMaskState = ICMS_INNER_CONSERVATIVE;
    else if (fs_prog_data->post_depth_coverage)
       InputCoverageMaskState = ICMS_DEPTH_COVERAGE;
    else
@@ -2328,6 +2331,7 @@ cmd_buffer_flush_gfx_runtime_state(struct anv_gfx_dynamic_state *hw_state,
        BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_MS_ALPHA_TO_COVERAGE_ENABLE) ||
        BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_MS_RASTERIZATION_SAMPLES) ||
        BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_RS_PROVOKING_VERTEX) ||
+       BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_RS_CONSERVATIVE_MODE) ||
        BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_FSR))
       update_fs_config(hw_state, dyn, gfx);
 
