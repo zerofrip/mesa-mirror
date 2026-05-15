@@ -1274,8 +1274,10 @@ radv_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer, UNUSED VkCommandB
       return;
 
    radv_reset_cmd_stream(device, cs);
-   if (cmd_buffer->gang.cs)
-      radv_reset_cmd_stream(device, cmd_buffer->gang.cs);
+   if (cmd_buffer->gang.cs) {
+      radv_destroy_cmd_stream(device, cmd_buffer->gang.cs);
+      cmd_buffer->gang.cs = NULL;
+   }
 
    list_for_each_entry_safe (struct radv_cmd_buffer_upload, up, &cmd_buffer->upload.list, list) {
       radv_rmv_log_command_buffer_bo_destroy(device, up->upload_bo);
@@ -1291,6 +1293,8 @@ radv_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer, UNUSED VkCommandB
    cmd_buffer->push_constant_stages = 0;
    cmd_buffer->gang.sem.leader_value = 0;
    cmd_buffer->gang.sem.emitted_leader_value = 0;
+   cmd_buffer->gang.sem.follower_value = 0;
+   cmd_buffer->gang.sem.emitted_follower_value = 0;
    cmd_buffer->gang.sem.va = 0;
    memset(&cmd_buffer->queue_state, 0, sizeof(cmd_buffer->queue_state));
    memset(&cmd_buffer->state, 0, sizeof(cmd_buffer->state));
