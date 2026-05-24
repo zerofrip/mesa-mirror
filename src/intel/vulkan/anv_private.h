@@ -113,6 +113,8 @@
 #include "vk_video.h"
 #include "vk_meta.h"
 
+#include "anv_drirc.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -188,15 +190,18 @@ get_max_vbs(const struct intel_device_info *devinfo) {
 #define ANV_TRTT_L1_NULL_TILE_VAL 0
 #define ANV_TRTT_L1_INVALID_TILE_VAL 1
 
-/* The binding table entry id disabled, the shader can write to it and the
+/* The binding table entry is disabled, the shader can write to it and the
  * driver should use a null surface state so that writes are discarded.
  */
 #define ANV_COLOR_OUTPUT_DISABLED (0xff)
-/* The binding table entry id unused, the shader does not write to it and the
+/* The binding table entry is unused, the shader does not write to it and the
  * driver can leave whatever surface state was used before. Transitioning
  * to/from this entry does not require render target cache flush.
  */
 #define ANV_COLOR_OUTPUT_UNUSED   (0xfe)
+/* The binding table entry is unknown.
+ */
+#define ANV_COLOR_OUTPUT_UNKNOWN  (0xfd)
 
 static inline uint64_t
 align_down_npot_u64(uint64_t v, uint64_t a)
@@ -1764,72 +1769,7 @@ static inline bool anv_needs_printf_buffer(void)
 struct anv_instance {
     struct vk_instance                          vk;
 
-    struct driOptionCache                       dri_options;
-    struct driOptionCache                       available_dri_options;
-
-    bool                                        enable_tbimr;
-    bool                                        enable_vf_distribution;
-    bool                                        enable_te_distribution;
-    bool                                        external_memory_implicit_sync;
-    bool                                        force_guc_low_latency;
-    bool                                        emulate_read_without_format;
-    bool                                        promote_cbv_to_push_buffers;
-    bool                                        enable_fully_covered;
-
-    /**
-     * Workarounds for game bugs.
-     */
-    uint8_t                                     assume_full_subgroups;
-    bool                                        assume_full_subgroups_with_barrier;
-    bool                                        assume_full_subgroups_with_shared_memory;
-    bool                                        limit_trig_input_range;
-    bool                                        lower_terminate_to_discard;
-    bool                                        sample_mask_out_opengl_behaviour;
-    bool                                        force_filter_addr_rounding;
-    bool                                        fp64_workaround_enabled;
-    float                                       lower_depth_range_rate;
-    unsigned                                    force_vk_vendor;
-    bool                                        has_fake_sparse;
-    bool                                        disable_fcv;
-    bool                                        enable_buffer_comp;
-    bool                                        disable_xe2_drm_ccs_modifiers;
-    bool                                        compression_control_enabled;
-    bool                                        anv_fake_nonlocal_memory;
-    bool                                        anv_upper_bound_descriptor_pool_sampler;
-    bool                                        custom_border_colors_without_format;
-    bool                                        large_workgroup_non_coherent_image_workaround;
-    bool                                        barrier_post_typed_clear_shader;
-    bool                                        barrier_post_untyped_clear_shader;
-
-    /* HW workarounds */
-    bool                                        no_16bit;
-    bool                                        intel_enable_wa_14018912822;
-    bool                                        intel_enable_wa_14024015672_msaa;
-
-    /**
-     * Performance workarounds
-     */
-    unsigned                                    binding_table_block_size;
-    bool                                        disable_lto;
-    bool                                        disable_push_constant_alloc;
-    enum brw_divergent_atomics_flags            enable_opt_divergent_atomics;
-    bool                                        force_sampler_prefetch;
-    bool                                        force_compute_surface_prefetch;
-    unsigned                                    generated_indirect_threshold;
-    unsigned                                    generated_indirect_ring_threshold;
-    unsigned                                    query_clear_with_blorp_threshold;
-    unsigned                                    query_copy_with_shader_threshold;
-    bool                                        state_cache_perf_fix;
-    bool                                        vf_component_packing;
-
-    /**
-     * Ray tracing configuration.
-     */
-    unsigned                                    stack_ids;
-    /**
-     * 3DSTATE_BTD dispatch timeout counter configuration.
-     */
-    unsigned                                    dispatch_timeout_counter;
+    struct anv_drirc                            drirc;
 };
 
 VkResult anv_init_wsi(struct anv_physical_device *physical_device);
@@ -1984,6 +1924,7 @@ enum anv_gfx_state_bits {
    ANV_GFX_STATE_WM,
    ANV_GFX_STATE_WM_DEPTH_STENCIL,
    ANV_GFX_STATE_PS_EXTRA,
+
    ANV_GFX_STATE_PMA_FIX, /* Fake state to implement workaround */
    ANV_GFX_STATE_WA_18019816803, /* Fake state to implement workaround */
    ANV_GFX_STATE_WA_14018283232, /* Fake state to implement workaround */
@@ -2492,6 +2433,9 @@ struct anv_gfx_dynamic_state {
 
    /** Dirty bits of what needs to be reemitted */
    BITSET_DECLARE(emit_dirty, ANV_GFX_STATE_MAX);
+
+   /** Emitted bits */
+   BITSET_DECLARE(emitted, ANV_GFX_STATE_MAX);
 };
 
 enum anv_internal_kernel_name {
@@ -4510,9 +4454,6 @@ struct anv_cmd_graphics_state {
    /* Bitfield of valid entries in the shaders array */
    VkShaderStageFlags active_stages;
 
-   uint32_t vs_source_hash;
-   uint32_t fs_source_hash;
-
    /* Pipeline information */
    uint32_t instance_multiplier;
 
@@ -5588,7 +5529,6 @@ anv_get_vbo_format(const struct anv_physical_device *device, VkFormat vk_format)
 bool anv_formats_ccs_e_compatible(const struct anv_physical_device *device,
                                   VkImageCreateFlags create_flags,
                                   VkFormat vk_format, VkImageTiling vk_tiling,
-                                  VkImageUsageFlags vk_usage,
                                   const VkImageFormatListCreateInfo *fmt_list);
 
 static inline VkFormat

@@ -52,13 +52,26 @@ jay_after_inst(jay_inst *I)
    return (jay_cursor) { .inst = I, .option = jay_cursor_after_inst };
 }
 
+static inline bool
+jay_op_starts_block(enum jay_opcode op)
+{
+   return op == JAY_OPCODE_PHI_DST ||
+          op == JAY_OPCODE_PRELOAD ||
+          op == JAY_OPCODE_ELSE;
+}
+
+static inline bool
+jay_op_ends_block(enum jay_opcode op)
+{
+   return op == JAY_OPCODE_PHI_SRC ||
+          (jay_op_is_control_flow(op) && op != JAY_OPCODE_ELSE);
+}
+
 static inline jay_cursor
 jay_before_block(jay_block *block)
 {
    jay_foreach_inst_in_block(block, I) {
-      if (I->op != JAY_OPCODE_PHI_DST &&
-          I->op != JAY_OPCODE_PRELOAD &&
-          I->op != JAY_OPCODE_ELSE)
+      if (!jay_op_starts_block(I->op))
          return jay_before_inst(I);
    }
 
@@ -70,7 +83,7 @@ static inline jay_cursor
 jay_after_block_logical(jay_block *block)
 {
    jay_foreach_inst_in_block_rev(block, I) {
-      if (I->op != JAY_OPCODE_PHI_SRC && !jay_op_is_control_flow(I->op))
+      if (!jay_op_ends_block(I->op))
          return jay_after_inst(I);
    }
 
@@ -449,10 +462,12 @@ struct jayb_send_params {
    enum jay_type src_type[2];
    unsigned nr_srcs;
    uint32_t ex_desc_imm;
+   int split; /**< explicit split point */
    bool eot;
    bool check_tdr;
    bool uniform;
    bool bindless;
+   bool pure;
 };
 
 static inline jay_inst *
@@ -524,15 +539,9 @@ _jay_SEND(jay_builder *b, const struct jayb_send_params p)
       I->src[2] = p.nr_srcs > 0 ? p.srcs[0] : jay_null();
       I->src[3] = p.nr_srcs > 1 ? p.srcs[1] : jay_null();
    } else {
-      /* Otherwise, we need to pick a point to split at.
-       *
-       * Heuristic: don't split render targer writes becuase RA gets confused
-       * with the EOT requirements. Split everything else in half.
-       *
-       * TODO: Come up with a better heuristic.
-       */
+      /* Otherwise, we need to pick a point to split at. */
       assert(info->type_0 == info->type_1);
-      unsigned split = !p.check_tdr ? (p.nr_srcs / 2) : p.nr_srcs;
+      unsigned split = p.split > 0 ? p.split : p.nr_srcs / 2;
       I->src[2] = jay_collect_vectors(b, &p.srcs[0], split);
       I->src[3] = jay_collect_vectors(b, &p.srcs[split], p.nr_srcs - split);
    }
@@ -572,6 +581,7 @@ _jay_SEND(jay_builder *b, const struct jayb_send_params p)
    info->check_tdr = p.check_tdr;
    info->uniform = p.uniform;
    info->bindless = p.bindless;
+   info->pure = p.pure;
    info->ex_desc_imm = p.ex_desc_imm;
    info->ex_mlen = lens[2];
    I->src[0] = jay_imm(((uint32_t) p.msg_desc) |

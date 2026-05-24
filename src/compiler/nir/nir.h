@@ -1712,6 +1712,43 @@ nir_alu_instr_channel_used(const nir_alu_instr *instr, unsigned src,
 bool
 nir_alu_instr_is_comparison(const nir_alu_instr *instr);
 
+static inline bool
+nir_alu_instr_is_mul_add(const nir_alu_instr *instr)
+{
+   if (!instr)
+      return false;
+
+   switch (instr->op) {
+   case nir_op_ffma:
+   case nir_op_ffma_weak:
+   case nir_op_fmad:
+      return true;
+   default:
+      return false;
+   }
+}
+
+static inline bool
+nir_alu_instr_is_mul_add_z(const nir_alu_instr *instr)
+{
+   if (!instr)
+      return false;
+
+   switch (instr->op) {
+   case nir_op_ffmaz:
+   case nir_op_fmadz:
+      return true;
+   default:
+      return false;
+   }
+}
+
+static inline bool
+nir_alu_instr_is_any_mul_add(const nir_alu_instr *alu)
+{
+   return nir_alu_instr_is_mul_add(alu) || nir_alu_instr_is_mul_add_z(alu);
+}
+
 bool nir_const_value_negative_equal(nir_const_value c1, nir_const_value c2,
                                     nir_alu_type full_type);
 
@@ -5792,11 +5829,13 @@ nir_lower_shader_calls(nir_shader *shader,
                        void *mem_ctx);
 
 int nir_get_io_offset_src_number(const nir_intrinsic_instr *instr);
+int nir_get_io_uniform_offset_src_number(const nir_intrinsic_instr *instr);
 int nir_get_io_index_src_number(const nir_intrinsic_instr *instr);
 int nir_get_io_data_src_number(const nir_intrinsic_instr *instr);
 int nir_get_io_arrayed_index_src_number(const nir_intrinsic_instr *instr);
 
 nir_src *nir_get_io_offset_src(nir_intrinsic_instr *instr);
+nir_src *nir_get_io_uniform_offset_src(nir_intrinsic_instr *instr);
 nir_src *nir_get_io_index_src(nir_intrinsic_instr *instr);
 nir_src *nir_get_io_data_src(nir_intrinsic_instr *instr);
 nir_src *nir_get_io_arrayed_index_src(nir_intrinsic_instr *instr);
@@ -5806,7 +5845,6 @@ static inline unsigned
 nir_get_io_base_size_nv(const nir_intrinsic_instr *intr)
 {
    switch (intr->intrinsic) {
-   case nir_intrinsic_global_atomic_nv:
    case nir_intrinsic_global_atomic_swap_nv:
    case nir_intrinsic_shared_atomic_nv:
    case nir_intrinsic_shared_atomic_swap_nv:
@@ -5819,6 +5857,9 @@ nir_get_io_base_size_nv(const nir_intrinsic_instr *intr)
    case nir_intrinsic_store_shared_nv:
    case nir_intrinsic_store_shared_unlock_nv:
       return 24;
+   case nir_intrinsic_global_atomic_nv:
+      /* TODO: SM100+ only has 23 bits for the UGPR + GPR form */
+      return 23;
    case nir_intrinsic_ldc_nv:
    case nir_intrinsic_ldcx_nv:
       return 16;
@@ -7280,6 +7321,37 @@ nir_is_io_compact(nir_shader *nir, bool is_output, unsigned location)
            location == VARYING_SLOT_CULL_DIST1 ||
            (nir->info.stage != MESA_SHADER_MESH && location == VARYING_SLOT_TESS_LEVEL_OUTER) ||
            (nir->info.stage != MESA_SHADER_MESH && location == VARYING_SLOT_TESS_LEVEL_INNER));
+}
+
+static inline nir_float_muladd_support
+nir_float_muladd_for_bitsize(const nir_shader *nir, unsigned bit_size)
+{
+   switch (bit_size) {
+   case 16:
+      return nir->options->float_mul_add16;
+   case 32:
+      return nir->options->float_mul_add32;
+   case 64:
+      return nir->options->float_mul_add64;
+   default:
+      UNREACHABLE("unsupported bit_size");
+      return (nir_float_muladd_support)0;
+   }
+}
+
+static inline bool
+nir_has_ffma(const nir_shader *nir, unsigned bit_size)
+{
+   nir_float_muladd_support muladd = nir_float_muladd_for_bitsize(nir, bit_size);
+   return (muladd & nir_float_muladd_support_has_ffma) != 0;
+}
+
+static inline bool
+nir_prefers_fmad(const nir_shader *nir, unsigned bit_size)
+{
+   nir_float_muladd_support muladd = nir_float_muladd_for_bitsize(nir, bit_size);
+   return  (muladd & nir_float_muladd_support_prefers_split) != 0 ||
+           (muladd & nir_float_muladd_support_has_ffma) == 0;
 }
 
 #ifdef __cplusplus

@@ -582,9 +582,6 @@ v3d_screen_get_compiler_options(struct pipe_screen *pscreen,
                 .lower_unpack_32_2x16_split = true,
                 .lower_fdiv = true,
                 .lower_find_lsb = true,
-                .lower_ffma16 = true,
-                .lower_ffma32 = true,
-                .lower_ffma64 = true,
                 .lower_flrp32 = true,
                 .lower_fpow = true,
                 .lower_fsqrt = true,
@@ -806,8 +803,8 @@ v3d_screen_create(int fd, const struct pipe_screen_config *config,
         if (!screen->perfcnt)
                 goto fail;
 
-        driParseConfigFiles(config->options, config->options_info, 0, "v3d",
-                            NULL, NULL, NULL, 0, NULL, 0);
+        driParseConfigFiles(config->options, config->options_info,
+                            &(driConfigFileParseParams) { .driverName = "v3d" });
 
         /* We have to driCheckOption for the simulator mode to not assertion
          * fail on not having our XML config.

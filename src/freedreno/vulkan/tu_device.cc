@@ -1869,11 +1869,18 @@ static const driOptionDescription tu_dri_options[] = {
 static void
 tu_init_dri_options(struct tu_instance *instance)
 {
+   driConfigFileParseParams params = {
+      .driverName = "turnip",
+      .applicationName = instance->vk.app_info.app_name,
+      .applicationVersion = instance->vk.app_info.app_version,
+      .engineName = instance->vk.app_info.engine_name,
+      .engineVersion = instance->vk.app_info.engine_version,
+   };
+
    driParseOptionInfo(&instance->available_dri_options, tu_dri_options,
                       ARRAY_SIZE(tu_dri_options));
-   driParseConfigFiles(&instance->dri_options, &instance->available_dri_options, 0, "turnip", NULL, NULL,
-                       instance->vk.app_info.app_name, instance->vk.app_info.app_version,
-                       instance->vk.app_info.engine_name, instance->vk.app_info.engine_version);
+   driParseConfigFiles(&instance->dri_options, &instance->available_dri_options,
+                       &params);
 
    instance->force_vk_vendor =
          driQueryOptioni(&instance->dri_options, "force_vk_vendor");
@@ -2260,7 +2267,7 @@ tu_trace_destroy_buffer(struct u_trace_context *utctx, void *timestamps)
 }
 
 template <chip CHIP>
-static void
+static bool
 tu_trace_record_ts(struct u_trace *ut, void *cs, void *timestamps,
                    uint64_t offset_B, uint32_t)
 {
@@ -2282,6 +2289,8 @@ tu_trace_record_ts(struct u_trace *ut, void *cs, void *timestamps,
                            .value);
       tu_cs_emit_qw(ts_cs, bo->iova + offset_B);
    }
+
+   return true;
 }
 
 static uint64_t
@@ -2471,7 +2480,8 @@ tu_u_trace_submission_data_create(
           * single-use. Therefor we have to copy trace points and create
           * a new timestamp buffer on every submit of reusable command buffer.
           */
-         trace_chunks_to_copy += list_length(&cmdbuf->trace.trace_chunks);
+         trace_chunks_to_copy += u_trace_clone_append_copy_count(
+            u_trace_begin_iterator(&cmdbuf->trace), u_trace_end_iterator(&cmdbuf->trace));
       } else {
          data->trace_per_cmd_buffer[i] = &cmdbuf->trace;
       }
@@ -2491,7 +2501,7 @@ fail:
    return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
 }
 
-void
+static void
 tu_free_copy_timestamp_data(struct tu_device *device,
                             struct tu_copy_timestamp_data *data)
 {
@@ -2739,7 +2749,7 @@ tu_device_get_timestamp(struct vk_device *vk_device, uint64_t *timestamp)
    return ret == 0 ? VK_SUCCESS : VK_ERROR_UNKNOWN;
 }
 
-void
+static void
 tu_device_destroy_mutexes(struct tu_device *device)
 {
    mtx_destroy(&device->bo_mutex);
@@ -3984,7 +3994,7 @@ tu_get_msrtss_temporary(struct tu_device *dev,
  * framebuffer with render passes or the command buffer with dynamic
  * rendering.
  */
-VkResult
+static VkResult
 tu_init_msrtss_attachments(struct tu_device *device,
                            const struct tu_render_pass *pass,
                            const struct tu_framebuffer *fb,

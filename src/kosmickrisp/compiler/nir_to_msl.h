@@ -72,6 +72,7 @@ bool msl_lower_textures(nir_shader *s);
 bool msl_lower_static_sample_mask(nir_shader *nir, uint32_t sample_mask);
 bool msl_ensure_depth_write(nir_shader *nir);
 bool msl_ensure_vertex_position_output(nir_shader *nir);
+bool msl_ensure_vertex_point_size_output(nir_shader *nir);
 bool msl_nir_fs_io_types(nir_shader *nir);
 bool msl_nir_vs_io_types(nir_shader *nir);
 bool msl_nir_fake_guard_for_discards(struct nir_shader *nir);
@@ -85,6 +86,8 @@ static const nir_shader_compiler_options kk_nir_options = {
    .lower_fdph = true,
    .has_fsub = true,
    .has_isub = true,
+   .float_mul_add16 = nir_float_muladd_support_has_ffma,
+   .float_mul_add32 = nir_float_muladd_support_has_ffma,
    .lower_extract_word = true,
    .lower_extract_byte = true,
    .lower_insert_word = true,

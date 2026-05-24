@@ -218,7 +218,7 @@ radv_shader_fp16_enabled(const struct radv_physical_device *pdev)
     * that by default because it can sometimes hurt perf.
     */
    return pdev->info.compiler_info.has_packed_math_16bit ||
-          (pdev->info.gfx_level == GFX8 && instance->drirc.features.expose_float16_gfx8);
+          (pdev->info.gfx_level == GFX8 && instance->drirc.features.enable_float16_gfx8);
 }
 
 bool
@@ -789,19 +789,25 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .KHR_video_maintenance1 = pdev->video_decode_enabled || pdev->video_encode_enabled,
       .KHR_video_maintenance2 = pdev->video_decode_enabled || pdev->video_encode_enabled,
       .KHR_video_queue = pdev->video_decode_enabled || pdev->video_encode_enabled,
-      .KHR_video_decode_av1 = (pdev->info.vcn_ip_version >= VCN_3_0_0 && pdev->info.vcn_ip_version != VCN_3_0_33 &&
-                               VIDEO_CODEC_AV1DEC && pdev->video_decode_enabled),
+      .KHR_video_decode_av1 =
+         VIDEO_CODEC_AV1DEC && pdev->video_decode_enabled && pdev->info.video_caps.dec[AC_VIDEO_CODEC_AV1].supported,
       .KHR_video_decode_queue = pdev->video_decode_enabled,
-      .KHR_video_decode_h264 = VIDEO_CODEC_H264DEC && pdev->video_decode_enabled,
-      .KHR_video_decode_h265 = pdev->info.family >= CHIP_TONGA && VIDEO_CODEC_H265DEC && pdev->video_decode_enabled,
-      .KHR_video_decode_vp9 =
-         (radv_video_decode_vp9_supported(pdev) && VIDEO_CODEC_VP9DEC && pdev->video_decode_enabled),
-      .KHR_video_encode_h264 = VIDEO_CODEC_H264ENC && pdev->video_encode_enabled,
-      .KHR_video_encode_h265 = VIDEO_CODEC_H265ENC && pdev->video_encode_enabled,
+      .KHR_video_decode_h264 =
+         VIDEO_CODEC_H264DEC && pdev->video_decode_enabled && pdev->info.video_caps.dec[AC_VIDEO_CODEC_AVC].supported,
+      .KHR_video_decode_h265 =
+         VIDEO_CODEC_H265DEC && pdev->video_decode_enabled && pdev->info.video_caps.dec[AC_VIDEO_CODEC_HEVC].supported,
+      .KHR_video_decode_vp9 = VIDEO_CODEC_VP9DEC && pdev->video_decode_enabled &&
+                              pdev->info.video_caps.dec[AC_VIDEO_CODEC_VP9].supported &&
+                              pdev->info.video_caps.dec[AC_VIDEO_CODEC_VP9].vp9.uncompressed_header_offset,
+      .KHR_video_encode_h264 =
+         VIDEO_CODEC_H264ENC && pdev->video_encode_enabled && pdev->info.video_caps.enc[AC_VIDEO_CODEC_AVC].supported,
+      .KHR_video_encode_h265 =
+         VIDEO_CODEC_H265ENC && pdev->video_encode_enabled && pdev->info.video_caps.enc[AC_VIDEO_CODEC_HEVC].supported,
       .KHR_video_encode_av1 =
-         (radv_video_encode_av1_supported(pdev) && VIDEO_CODEC_AV1ENC && pdev->video_encode_enabled),
+         VIDEO_CODEC_AV1ENC && pdev->video_encode_enabled && pdev->info.video_caps.enc[AC_VIDEO_CODEC_AV1].supported,
       .KHR_video_encode_intra_refresh = pdev->video_encode_enabled,
-      .KHR_video_encode_quantization_map = pdev->video_encode_enabled && radv_video_encode_qp_map_supported(pdev),
+      .KHR_video_encode_quantization_map =
+         pdev->video_encode_enabled && pdev->info.video_caps.enc[AC_VIDEO_CODEC_AVC].qp_map,
       .KHR_video_encode_queue = pdev->video_encode_enabled,
       .KHR_vulkan_memory_model = true,
       .KHR_workgroup_memory_explicit_layout = true,
@@ -828,7 +834,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .EXT_descriptor_heap = instance->experimental_flags & RADV_EXPERIMENTAL_DESCRIPTOR_HEAP,
       .EXT_descriptor_indexing = true,
       .EXT_device_address_binding_report = true,
-      .EXT_device_fault = pdev->info.has_gpuvm_fault_query,
+      .EXT_device_fault = true,
       .EXT_device_generated_commands = pdev->info.gfx_level >= GFX8,
       .EXT_device_memory_report = true,
       .EXT_discard_rectangles = true,
@@ -950,7 +956,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .VALVE_mutable_descriptor_type = true,
       .VALVE_shader_mixed_float_dot_product = pdev->info.compiler_info.has_accelerated_dot_product,
       .VALVE_video_encode_rgb_conversion =
-         pdev->video_encode_enabled && pdev->info.vcn_ip_version >= VCN_2_0_0 && pdev->info.vcn_ip_version != VCN_2_2_0,
+         pdev->video_encode_enabled && pdev->info.video_caps.enc[AC_VIDEO_CODEC_AVC].efc,
    };
    *out_ext = ext;
 }
@@ -2571,8 +2577,8 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
    pdev->emulate_etc2 = !pdev->info.has_etc_support;
    pdev->emulate_astc = true;
 #else
-   pdev->emulate_etc2 = !pdev->info.has_etc_support && instance->drirc.features.vk_require_etc2;
-   pdev->emulate_astc = instance->drirc.features.vk_require_astc;
+   pdev->emulate_etc2 = !pdev->info.has_etc_support && instance->drirc.features.require_etc2;
+   pdev->emulate_astc = instance->drirc.features.require_astc;
 #endif
 
    const char *name = ac_get_family_name(pdev->info.family);
@@ -2590,6 +2596,8 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
    pdev->dcc_msaa_allowed = (instance->perftest_flags & RADV_PERFTEST_DCC_MSAA);
 
    pdev->use_fmask = pdev->info.compiler_info.has_fmask && !(instance->debug_flags & RADV_DEBUG_NO_FMASK);
+
+   pdev->force_64_byte_sampled_image = !pdev->use_fmask && instance->drirc.debug.force_64_byte_sampled_image;
 
    pdev->use_hiz = !(instance->debug_flags & RADV_DEBUG_NO_HIZ);
 
@@ -3008,22 +3016,22 @@ radv_GetPhysicalDeviceQueueFamilyProperties2(VkPhysicalDevice physicalDevice, ui
             VkQueueFamilyVideoPropertiesKHR *prop = (VkQueueFamilyVideoPropertiesKHR *)ext;
             prop->videoCodecOperations = 0;
             if (pQueueFamilyProperties[i].queueFamilyProperties.queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR) {
-               if (VIDEO_CODEC_H264DEC)
+               if (VIDEO_CODEC_H264DEC && pdev->info.video_caps.dec[AC_VIDEO_CODEC_AVC].supported)
                   prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR;
-               if (VIDEO_CODEC_H265DEC)
+               if (VIDEO_CODEC_H265DEC && pdev->info.video_caps.dec[AC_VIDEO_CODEC_HEVC].supported)
                   prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR;
-               if (VIDEO_CODEC_AV1DEC && pdev->info.vcn_ip_version >= VCN_3_0_0 &&
-                   pdev->info.vcn_ip_version != VCN_3_0_33)
+               if (VIDEO_CODEC_AV1DEC && pdev->info.video_caps.dec[AC_VIDEO_CODEC_AV1].supported)
                   prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR;
-               if (VIDEO_CODEC_VP9DEC)
+               if (VIDEO_CODEC_VP9DEC && pdev->info.video_caps.dec[AC_VIDEO_CODEC_VP9].supported &&
+                   pdev->info.video_caps.dec[AC_VIDEO_CODEC_VP9].vp9.uncompressed_header_offset)
                   prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR;
             }
             if (pQueueFamilyProperties[i].queueFamilyProperties.queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) {
-               if (VIDEO_CODEC_H264ENC)
+               if (VIDEO_CODEC_H264ENC && pdev->info.video_caps.enc[AC_VIDEO_CODEC_AVC].supported)
                   prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR;
-               if (VIDEO_CODEC_H265ENC)
+               if (VIDEO_CODEC_H265ENC && pdev->info.video_caps.enc[AC_VIDEO_CODEC_HEVC].supported)
                   prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR;
-               if (VIDEO_CODEC_AV1ENC && radv_video_encode_av1_supported(pdev))
+               if (VIDEO_CODEC_AV1ENC && pdev->info.video_caps.enc[AC_VIDEO_CODEC_AV1].supported)
                   prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR;
             }
             break;

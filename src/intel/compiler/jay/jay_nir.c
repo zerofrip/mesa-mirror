@@ -11,6 +11,7 @@
 #include "nir.h"
 #include "nir_builder.h"
 #include "nir_intrinsics.h"
+#include "shader_enums.h"
 
 /*
  * Jay-to-NIR relies on a careful indexing of defs: every 32-bit word has
@@ -51,7 +52,7 @@ lower_helper_invocation(nir_builder *b, nir_intrinsic_instr *intr, void *_)
    /* TODO: Is this right for multisampling? */
    b->cursor = nir_before_instr(&intr->instr);
    nir_def *active =
-      nir_inot(b, nir_inverse_ballot(b, nir_load_coverage_mask_intel(b)));
+      nir_inot(b, nir_inverse_ballot(b, nir_load_dispatch_mask_intel(b)));
 
    nir_def_replace(&intr->def, active);
    return true;
@@ -151,10 +152,8 @@ collect_fragment_output(nir_builder *b, nir_intrinsic_instr *intr, void *ctx_)
    } else if (loc == FRAG_RESULT_DEPTH) {
       out = &ctx->depth;
    } else if (loc == FRAG_RESULT_STENCIL) {
-      UNREACHABLE("todo");
       out = &ctx->stencil;
    } else if (loc == FRAG_RESULT_SAMPLE_MASK) {
-      UNREACHABLE("todo");
       out = &ctx->sample_mask;
    } else {
       UNREACHABLE("invalid location");
@@ -166,43 +165,19 @@ collect_fragment_output(nir_builder *b, nir_intrinsic_instr *intr, void *ctx_)
    nir_instr_remove(&intr->instr);
    return true;
 }
-
-static void
-append_payload(nir_builder *b,
-               nir_def **payload,
-               unsigned *len,
-               unsigned max_len,
-               nir_def *value)
-{
-   if (value != NULL) {
-      for (unsigned i = 0; i < value->num_components; ++i) {
-         payload[*len] = nir_channel(b, value, i);
-         (*len)++;
-         assert((*len) <= max_len);
-      }
-   }
-}
-
 static void
 insert_rt_store(nir_builder *b,
-                const struct intel_device_info *devinfo,
                 signed target,
-                bool last,
                 nir_def *colour,
-                nir_def *src0_alpha,
+                nir_def *src0_colour,
                 nir_def *depth,
                 nir_def *stencil,
-                nir_def *sample_mask,
-                unsigned dispatch_width)
+                nir_def *sample_mask)
 {
    bool null_rt = target < 0;
    target = MAX2(target, 0);
 
-   if (!colour) {
-      colour = nir_undef(b, 4, 32);
-   }
-
-   colour = nir_pad_vec4(b, colour);
+   colour = nir_pad_vec4(b, colour ?: nir_undef(b, 4, 32));
 
    if (null_rt) {
       /* Even if we don't write a RT, we still need to write alpha for
@@ -212,42 +187,14 @@ insert_rt_store(nir_builder *b,
                                      nir_channel(b, colour, 3), 3);
    }
 
-   /* TODO: Not sure I like this. We'll see what 2src looks like. */
-   unsigned op = dispatch_width == 32 ?
-                    XE2_DATAPORT_RENDER_TARGET_WRITE_SIMD32_SINGLE_SOURCE :
-                    BRW_DATAPORT_RENDER_TARGET_WRITE_SIMD16_SINGLE_SOURCE;
-   uint64_t desc =
-      brw_fb_write_desc(devinfo, target, op, last, false /* coarse write */);
-
-   uint64_t ex_desc = 0;
-   if (devinfo->ver >= 20) {
-      ex_desc = target << 21 |
-                null_rt << 20 |
-                (src0_alpha ? (1 << 15) : 0) |
-                (stencil ? (1 << 14) : 0) |
-                (depth ? (1 << 13) : 0) |
-                (sample_mask ? (1 << 12) : 0);
-   } else if (devinfo->ver >= 11) {
-      /* Set the "Render Target Index" and "Src0 Alpha Present" fields
-       * in the extended message descriptor, in lieu of using a header.
-       */
-      ex_desc = target << 12 | null_rt << 20 | (src0_alpha ? (1 << 15) : 0);
-   }
-
-   /* Build the payload */
-   nir_def *payload[8] = { NULL };
-   unsigned len = 0;
-   append_payload(b, payload, &len, ARRAY_SIZE(payload), colour);
-   append_payload(b, payload, &len, ARRAY_SIZE(payload), depth);
-   /* TODO */
+   nir_def *src0_alpha = nir_channel_or_undef(b, src0_colour ?: colour, 3);
 
    nir_def *disable = b->shader->info.fs.uses_discard ?
                          nir_is_helper_invocation(b, 1) :
                          nir_imm_false(b);
 
-   nir_store_render_target_intel(b, nir_vec(b, payload, len),
-                                 nir_imm_ivec2(b, desc, ex_desc), disable,
-                                 .eot = last);
+   nir_store_render_target_intel(b, colour, src0_alpha, sample_mask, depth,
+                                 stencil, disable, .target = target);
 }
 
 static void
@@ -271,16 +218,18 @@ lower_fragment_outputs(nir_function_impl *impl,
       }
    }
 
+   nir_def *undef = nir_undef(b, 1, 32);
    for (signed i = 0; i < last; ++i) {
       if (ctx.colour[i]) {
-         insert_rt_store(b, devinfo, i, false, ctx.colour[i], NULL, ctx.depth,
-                         ctx.stencil, ctx.sample_mask, dispatch_width);
+         insert_rt_store(b, i, ctx.colour[i], i > 0 ? ctx.colour[0] : NULL,
+                         ctx.depth ?: undef, ctx.stencil ?: undef,
+                         ctx.sample_mask ?: undef);
       }
    }
 
-   insert_rt_store(b, devinfo, last, true, last >= 0 ? ctx.colour[last] : NULL,
-                   NULL, ctx.depth, ctx.stencil, ctx.sample_mask,
-                   dispatch_width);
+   insert_rt_store(b, last, last >= 0 ? ctx.colour[last] : NULL,
+                   last > 0 ? ctx.colour[0] : NULL, ctx.depth ?: undef,
+                   ctx.stencil ?: undef, ctx.sample_mask ?: undef);
 }
 
 unsigned
@@ -312,6 +261,17 @@ jay_process_nir(const struct intel_device_info *devinfo,
    /* TODO: Real heuristic */
    bool do_simd32 = INTEL_SIMD(FS, 32);
    do_simd32 &= stage == MESA_SHADER_COMPUTE || stage == MESA_SHADER_FRAGMENT;
+
+   /* TODO: The SIMD32 fragment payload is even more fragmented than RA
+    * currently models when sample position is read. RA needs a rework to handle
+    * the real partitions in a proper way (this is planned soon).
+    *
+    * Hot fix for
+    * dEQP-GLES31.functional.shaders.sample_variables.sample_pos.correctness.multisample_texture_4
+    */
+   do_simd32 &=
+      !BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_SAMPLE_POS);
+
    unsigned simd_width = do_simd32 ? (nir->info.api_subgroup_size ?: 32) : 16;
 
    if (stage == MESA_SHADER_VERTEX) {
@@ -372,6 +332,7 @@ jay_process_nir(const struct intel_device_info *devinfo,
       NIR_PASS(_, nir, nir_shader_intrinsics_pass, lower_frag_coord,
                nir_metadata_control_flow, NULL);
       NIR_PASS(_, nir, nir_opt_barycentric, true);
+      NIR_PASS(_, nir, nir_opt_constant_folding);
 
       lower_fragment_outputs(nir_shader_get_entrypoint(nir), devinfo,
                              key->fs.nr_color_regions, simd_width);

@@ -837,34 +837,6 @@ prepare_vp(struct panvk_cmd_buffer *cmdbuf)
 }
 #endif
 
-#if PAN_ARCH >= 12
-static inline uint64_t
-get_vs_all_spd(const struct panvk_cmd_buffer *cmdbuf)
-{
-   const struct panvk_shader_variant *vs =
-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
-   assert(vs);
-   const struct vk_input_assembly_state *ia =
-      &cmdbuf->vk.dynamic_graphics_state.ia;
-   return ia->primitive_topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST
-             ? panvk_priv_mem_dev_addr(vs->spds.all_points)
-             : panvk_priv_mem_dev_addr(vs->spds.all_triangles);
-}
-#else
-static inline uint64_t
-get_vs_pos_spd(const struct panvk_cmd_buffer *cmdbuf)
-{
-   const struct panvk_shader_variant *vs =
-      panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
-   assert(vs);
-   const struct vk_input_assembly_state *ia =
-      &cmdbuf->vk.dynamic_graphics_state.ia;
-   return ia->primitive_topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST
-             ? panvk_priv_mem_dev_addr(vs->spds.pos_points)
-             : panvk_priv_mem_dev_addr(vs->spds.pos_triangles);
-}
-#endif
-
 static void
 prepare_tiler_primitive_size(struct panvk_cmd_buffer *cmdbuf)
 {
@@ -941,6 +913,18 @@ calc_render_descs_size(struct panvk_cmd_buffer *cmdbuf)
    uint32_t fbd_count = calc_enabled_layer_count(cmdbuf);
    uint32_t td_count = DIV_ROUND_UP(cmdbuf->state.gfx.render.layer_count,
                                     MAX_LAYERS_PER_TILER_DESC);
+
+   /* v14+ supports a maximum of one tiler descriptor.
+    * This should be enough since the driver reports maxFramebufferLayers
+    * and maxMultiviewViewCount lower or equal to MAX_LAYERS_PER_TILER_DESC. */
+   assert(PAN_ARCH < 14 || td_count <= 1);
+   static_assert(
+      PAN_ARCH < 14 || MAX_FRAMEBUFFER_LAYERS <= MAX_LAYERS_PER_TILER_DESC,
+      "MAX_FRAMEBUFFER_LAYERS must be <= max amount of layers a Tiler descriptor can index");
+   static_assert(
+      PAN_ARCH < 14 ||
+         PAN_MAX_MULTIVIEW_VIEW_COUNT <= MAX_LAYERS_PER_TILER_DESC,
+      "PAN_MAX_MULTIVIEW_VIEW_COUNT must be <= max amount of layers a Tiler descriptor can index");
 
    return (calc_fbd_size(cmdbuf) * fbd_count) +
           (td_count * pan_size(TILER_CONTEXT));
@@ -1063,7 +1047,10 @@ get_tiler_desc(struct panvk_cmd_buffer *cmdbuf)
 
       /* This will be overloaded. */
       cfg.layer_count = 1;
+
+#if PAN_ARCH < 14
       cfg.layer_offset = 0;
+#endif
    }
 
    /* When simul_use=true, the tiler descriptors are allocated from the
@@ -1257,8 +1244,10 @@ init_layer_fragment_state(const struct pan_fb_desc_info *info,
     * have in frame_argument to pass other information to the fragment
     * shader at some point.
     */
-   assert(info->layer >= info->tiler_ctx->valhall.layer_offset);
    fbd_data.frame_argument = info->layer;
+
+   /* Layer offset is unused on v14+. */
+   assert(info->tiler_ctx->valhall.layer_offset == 0);
 
    pan_pack(&fbd_data.flags0, FRAGMENT_FLAGS_0, cfg) {
       cfg.pre_frame_0 = pan_fix_frame_shader_mode(info->frame_shaders.modes[0],
@@ -1276,8 +1265,7 @@ init_layer_fragment_state(const struct pan_fb_desc_info *info,
       cfg.hsr_prepass_filter_enable = true;
       cfg.hsr_hierarchical_optimizations_enable = true;
 
-      cfg.internal_layer_index =
-         info->layer - info->tiler_ctx->valhall.layer_offset;
+      cfg.internal_layer_index = info->layer;
    }
 
    pan_pack(&fbd_data.flags2, FRAGMENT_FLAGS_2, cfg) {
@@ -1710,6 +1698,8 @@ get_render_ctx(struct panvk_cmd_buffer *cmdbuf)
 static VkResult
 prepare_vs(struct panvk_cmd_buffer *cmdbuf, const struct panvk_draw_info *draw)
 {
+   const struct vk_input_assembly_state *ia =
+      &cmdbuf->vk.dynamic_graphics_state.ia;
    struct panvk_descriptor_state *desc_state = &cmdbuf->state.gfx.desc_state;
    struct panvk_shader_desc_state *vs_desc_state = &cmdbuf->state.gfx.vs.desc;
    const struct panvk_shader_variant *vs =
@@ -1744,13 +1734,23 @@ prepare_vs(struct panvk_cmd_buffer *cmdbuf, const struct panvk_draw_info *draw)
                       vs_desc_state->res_table);
 
 #if PAN_ARCH >= 12
-      if (gfx_state_dirty(cmdbuf, VS))
-         cs_move64_to(b, cs_sr_reg64(b, IDVS, VERTEX_SPD), get_vs_all_spd(cmdbuf));
+      if (gfx_state_dirty(cmdbuf, VS) ||
+          dyn_gfx_state_dirty(cmdbuf, IA_PRIMITIVE_TOPOLOGY)) {
+         const uint64_t spd_addr =
+            ia->primitive_topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST
+            ? panvk_priv_mem_dev_addr(vs->spds.all_points)
+            : panvk_priv_mem_dev_addr(vs->spds.all_triangles);
+         cs_move64_to(b, cs_sr_reg64(b, IDVS, VERTEX_SPD), spd_addr);
+      }
 #else
       if (gfx_state_dirty(cmdbuf, VS) ||
-          dyn_gfx_state_dirty(cmdbuf, IA_PRIMITIVE_TOPOLOGY))
-         cs_move64_to(b, cs_sr_reg64(b, IDVS, VERTEX_POS_SPD),
-                      get_vs_pos_spd(cmdbuf));
+          dyn_gfx_state_dirty(cmdbuf, IA_PRIMITIVE_TOPOLOGY)) {
+         const uint64_t pos_spd_addr =
+            ia->primitive_topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST
+            ? panvk_priv_mem_dev_addr(vs->spds.pos_points)
+            : panvk_priv_mem_dev_addr(vs->spds.pos_triangles);
+         cs_move64_to(b, cs_sr_reg64(b, IDVS, VERTEX_POS_SPD), pos_spd_addr);
+      }
 
       if (gfx_state_dirty(cmdbuf, VS))
          cs_move64_to(b, cs_sr_reg64(b, IDVS, VERTEX_VARY_SPD),

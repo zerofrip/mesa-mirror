@@ -152,12 +152,12 @@ prepare_cube_coords(nir_builder *b, nir_tex_instr *tex, nir_def **coord, nir_src
       sc = nir_fadd_imm(b, sc, 1.5);
       tc = nir_fadd_imm(b, tc, 1.5);
    } else {
-      sc = nir_ffma_imm2(b, sc, invma, 1.5);
-      tc = nir_ffma_imm2(b, tc, invma, 1.5);
+      sc = nir_ffma_weak_imm2(b, sc, invma, 1.5);
+      tc = nir_ffma_weak_imm2(b, tc, invma, 1.5);
    }
 
    if (tex->is_array && coords[3])
-      id = nir_ffma_imm1(b, coords[3], 8.0, id);
+      id = nir_ffma_weak_imm1(b, coords[3], 8.0, id);
 
    *coord = nir_vec3(b, sc, tc, id);
 
@@ -330,6 +330,7 @@ build_coordinate(struct move_tex_coords_state *state, nir_scalar scalar, coord_i
    /* Move load_*input(barycentric, imm) to the cursor location if nessecary. */
    if (instr_needs_move(b->cursor, &info.load->instr)) {
       nir_instr_move(b->cursor, &info.load->instr);
+      b->cursor = nir_after_instr(&info.load->instr);
 
       unsigned num_srcs = nir_intrinsic_infos[info.load->intrinsic].num_srcs;
 

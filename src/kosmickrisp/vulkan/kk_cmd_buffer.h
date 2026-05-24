@@ -77,6 +77,7 @@ struct kk_per_draw_data {
 };
 
 struct kk_attachment {
+   VkRenderingAttachmentFlagsKHR flags;
    VkFormat vk_format;
    struct kk_image_view *iview;
 
@@ -137,7 +138,8 @@ struct kk_graphics_state {
    /* Index buffer */
    struct {
       mtl_buffer *handle;
-      uint32_t size;
+      uint64_t buffer_size;
+      uint32_t range;
       uint32_t offset;
       uint32_t restart;
       uint8_t bytes_per_index;
