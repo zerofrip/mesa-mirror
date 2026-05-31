@@ -28,17 +28,16 @@
 
 #include "layers/radv_app_workarounds.h"
 #include "meta/radv_meta.h"
+#include "tools/radv_debug_hang.h"
+#include "tools/radv_rmv.h"
+#include "tools/radv_spm.h"
+#include "tools/radv_sqtt.h"
 #include "util/u_debug.h"
 #include "radv_cs.h"
-#include "radv_debug.h"
-#include "radv_debug_nir.h"
 #include "radv_entrypoints.h"
 #include "radv_formats.h"
 #include "radv_physical_device.h"
-#include "radv_rmv.h"
 #include "radv_shader.h"
-#include "radv_spm.h"
-#include "radv_sqtt.h"
 #include "vk_common_entrypoints.h"
 #include "vk_pipeline_cache.h"
 #include "vk_util.h"
@@ -1169,6 +1168,7 @@ radv_device_init_compiler_info(struct radv_device *device)
             .force_64_byte_sampled_image = pdev->force_64_byte_sampled_image,
             .robust_buffer_access = pdev->use_llvm && (device->vk.enabled_features.robustBufferAccess2 ||
                                                        device->vk.enabled_features.robustBufferAccess),
+            .coop_matrix_robust_buffer_access = device->vk.enabled_features.cooperativeMatrixRobustBufferAccess,
             .mitigate_smem_oob = pdev->info.compiler_info.has_smem_oob_access_bug &&
                                  !(instance->debug_flags & RADV_DEBUG_NO_SMEM_MITIGATION),
             .mitigate_smem_with_null_prt =
@@ -1418,7 +1418,7 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
     */
    device->vk.copy_sync_payloads = ((instance->vk.trace_mode & RADV_TRACE_MODE_RGP) && radv_sqtt_queue_events_enabled())
                                       ? NULL
-                                      : pdev->ws->copy_sync_payloads;
+                                      : device->ws->copy_sync_payloads;
 
    /* VM_ALWAYS_VALID must be supported. */
    assert(pdev->info.has_vm_always_valid);

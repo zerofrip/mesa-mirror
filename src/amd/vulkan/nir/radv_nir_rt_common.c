@@ -7,6 +7,7 @@
 #include "nir/radv_nir_rt_common.h"
 #include "bvh/bvh.h"
 #include "nir_builder.h"
+#include "radv_shader.h"
 
 #include "radv_device.h"
 #include "radv_physical_device.h"

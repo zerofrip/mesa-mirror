@@ -7,6 +7,8 @@ pub mod bitset;
 pub mod cfg;
 pub mod dataflow;
 pub mod depth_first_search;
+pub mod float16;
+pub mod lower_bounded;
 pub mod memstream;
 pub mod nir;
 pub mod nir_instr_printer;

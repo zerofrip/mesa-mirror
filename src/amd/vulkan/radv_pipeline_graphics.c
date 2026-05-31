@@ -13,16 +13,16 @@
 #include "nir/nir_serialize.h"
 #include "nir/nir_xfb_info.h"
 #include "nir/radv_nir.h"
+#include "tools/radv_rmv.h"
 #include "util/mesa-blake3.h"
 #include "util/os_time.h"
 #include "util/u_atomic.h"
-#include "radv_debug.h"
+#include "radv_device.h"
 #include "radv_entrypoints.h"
 #include "radv_formats.h"
 #include "radv_physical_device.h"
 #include "radv_pipeline_binary.h"
 #include "radv_pipeline_cache.h"
-#include "radv_rmv.h"
 #include "radv_shader.h"
 #include "radv_shader_args.h"
 #include "shader_enums.h"
@@ -1714,6 +1714,7 @@ radv_generate_graphics_state_key(const struct radv_compiler_info *compiler_info,
    }
 
    key.ps.force_vrs_enabled = compiler_info->force_vrs_enabled && !radv_is_static_vrs_enabled(state);
+   key.vrs_may_be_enabled = radv_is_vrs_enabled(state) || key.ps.force_vrs_enabled;
 
    if ((radv_is_vrs_enabled(state) || key.ps.force_vrs_enabled) && compiler_info->ac->has_vrs_frag_pos_z_bug)
       key.adjust_frag_coord_z = true;
@@ -2563,7 +2564,10 @@ radv_graphics_shaders_compile(const struct radv_compiler_info *compiler_info, st
       NIR_PASS(_, stages[MESA_SHADER_FRAGMENT].nir, nir_opt_cse);
       NIR_PASS(_, stages[MESA_SHADER_FRAGMENT].nir, nir_opt_copy_prop);
       NIR_PASS(_, stages[MESA_SHADER_FRAGMENT].nir, nir_opt_dce);
-      NIR_PASS(_, stages[MESA_SHADER_FRAGMENT].nir, nir_opt_frag_coord_to_pixel_coord);
+
+      NIR_PASS(_, stages[MESA_SHADER_FRAGMENT].nir, radv_nir_lower_opt_fs_frag_pos,
+               !gfx_state->vrs_may_be_enabled && !gfx_state->ms.sample_shading_enable &&
+                  !stages[MESA_SHADER_FRAGMENT].nir->info.fs.uses_sample_shading);
 
       /* Lower the view index to map on the layer. */
       NIR_PASS(_, stages[MESA_SHADER_FRAGMENT].nir, radv_nir_lower_view_index);
